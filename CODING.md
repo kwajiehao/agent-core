@@ -4,6 +4,30 @@
 
 Start with the smallest change that fixes the observed behavior.
 
+## Simplicity criterion
+
+All else being equal, simpler is better. A change that technically satisfies an
+acceptance criterion but adds awkward control flow, speculative abstractions, or
+task-specific special cases should earn its complexity.
+
+When deciding whether to keep a change, weigh the complexity cost against the
+behavioral improvement:
+
+- A narrow bug fix that adds one clear guard and a focused regression test is
+  usually worth keeping.
+- A fix that adds a new mode, flag, helper layer, or broad interface change just
+  to satisfy one edge case is probably not worth it unless the edge case is
+  central to the product behavior.
+- Removing duplicated logic and preserving or improving test/smoke coverage is
+  a simplification win.
+- Replacing custom parsing, polling, or retry code with an existing repo helper
+  while keeping behavior equivalent is a simplification win.
+- A tiny acceptance improvement that requires fragile branching across several
+  files is usually worse than a slightly narrower fix that keeps the contract
+  obvious.
+- A behavior-neutral change that deletes code, reduces special cases, or makes
+  ownership clearer is worth keeping when tests and smoke coverage still pass.
+
 Before adding helpers, flags, new return types, or changing function signatures, prefer:
 1. Keep the existing public/internal contract unchanged.
 2. Localize edge-case handling inside the function that already owns the behavior.
