@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -371,6 +372,74 @@ rollback: Revert demo changes.
     assert "python -c" in (run.run_dir / "maker-prompt.md").read_text(encoding="utf-8")
 
 
+def test_prepare_run_writes_agent_manifest_to_run_json(tmp_path: Path) -> None:
+    smoke = tmp_path / "agent-docs" / "smoke-tests" / "PR-99-demo.sh"
+    smoke.parent.mkdir(parents=True)
+    smoke.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    local_maker = tmp_path / "agent-docs" / "skills" / "agent-docs-maker" / "SKILL.md"
+    local_maker.parent.mkdir(parents=True)
+    local_maker.write_text(
+        """---
+name: agent-docs-maker
+description: Local maker role override.
+---
+
+# Local Maker
+""",
+        encoding="utf-8",
+    )
+
+    selected_skill = tmp_path / "agent-docs" / "skills" / "smoke-debugging" / "SKILL.md"
+    selected_skill.parent.mkdir(parents=True)
+    selected_skill.write_text(
+        """---
+name: smoke-debugging
+description: Debug smoke verification failures.
+---
+
+# Smoke Debugging
+""",
+        encoding="utf-8",
+    )
+
+    task_path = write_task(
+        tmp_path,
+        """---
+id: PR-99
+title: Smoke Verification
+status: todo
+allowed_paths:
+  - agent-docs/smoke-tests/PR-99-demo.sh
+read_first: []
+test_commands: []
+rollback: Revert demo changes.
+---
+
+# PR-99
+""",
+    )
+
+    task = load_task(task_path, tmp_path)
+    run = prepare_run(task, tmp_path, prepare_only=True)
+
+    run_json = json.loads((run.run_dir / "run.json").read_text(encoding="utf-8"))
+    agents = run_json["agents"]
+    assert set(agents) == {"maker", "verifier", "reflection"}
+    assert agents["maker"]["prompt"] == str(run.run_dir / "maker-prompt.md")
+    assert agents["maker"]["role_skill_name"] == "agent-docs-maker"
+    assert agents["maker"]["role_skill"] == str(local_maker)
+    assert agents["verifier"]["role_skill"] == str(
+        CORE_SKILLS_DIR / "agent-docs-verifier" / "SKILL.md"
+    )
+    assert [skill["name"] for skill in agents["maker"]["selected_skills"]] == [
+        "smoke-debugging"
+    ]
+    assert agents["verifier"]["selected_skills"] == agents["maker"]["selected_skills"]
+    assert agents["reflection"]["selected_skills"] == []
+    assert run_json["skills"] == agents["maker"]["selected_skills"]
+
+
 def test_prepare_run_injects_role_skills_when_present(tmp_path: Path) -> None:
     smoke = tmp_path / "agent-docs" / "smoke-tests" / "PR-99-demo.sh"
     smoke.parent.mkdir(parents=True)
@@ -422,7 +491,8 @@ id: PR-99
 title: Demo Loop Task
 status: todo
 allowed_paths:
-  - src/api/**
+  - agent-docs/smoke-tests/PR-99-demo.sh
+  - agent-docs/smoke-tests/PR-99-other.sh
 read_first: []
 test_commands: []
 rollback: Revert demo changes.
@@ -437,6 +507,7 @@ rollback: Revert demo changes.
 
     assert exit_code == 2
     assert "ERROR:" in captured.err
+    assert "Multiple exact smoke scripts" in captured.err
     assert "Traceback" not in captured.err
 
 

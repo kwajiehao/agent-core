@@ -233,7 +233,6 @@ def load_task(task_path: str | Path, repo_root: str | Path) -> TaskSpec:
         "status",
         "allowed_paths",
         "read_first",
-        "test_commands",
         "rollback",
     ]
     missing = [key for key in required if key not in frontmatter]
@@ -252,7 +251,7 @@ def load_task(task_path: str | Path, repo_root: str | Path) -> TaskSpec:
         change_type=str(frontmatter["change_type"]) if frontmatter.get("change_type") is not None else None,
         allowed_paths=_string_list(frontmatter["allowed_paths"]),
         read_first=_string_list(frontmatter["read_first"]),
-        test_commands=_string_list(frontmatter["test_commands"]),
+        test_commands=_string_list(frontmatter.get("test_commands", [])),
         rollback=str(frontmatter["rollback"]),
         loop=LoopConfig.from_mapping(frontmatter.get("loop")),
     )
@@ -301,7 +300,12 @@ def discover_skills(repo_root: str | Path, task: TaskSpec) -> list[SkillSummary]
     return sorted(matches, key=lambda skill: skill.name)
 
 
-def infer_smoke_script(task: TaskSpec, repo_root: str | Path) -> Path:
+def infer_smoke_script(
+    task: TaskSpec,
+    repo_root: str | Path,
+    *,
+    require_exists: bool = True,
+) -> Path:
     root = Path(repo_root).resolve()
     exact_candidates: list[Path] = []
     for allowed in task.allowed_paths:
@@ -318,12 +322,12 @@ def infer_smoke_script(task: TaskSpec, repo_root: str | Path) -> Path:
         )
     if exact_candidates:
         candidate = exact_candidates[0]
-        if candidate.exists():
+        if not require_exists or candidate.exists():
             return candidate
         raise MissingSmokeScript(f"Expected smoke script does not exist: {candidate}")
 
     stem_candidate = root / "agent-docs" / "smoke-tests" / f"{task.path.stem}.sh"
-    if stem_candidate.exists():
+    if not require_exists or stem_candidate.exists():
         return stem_candidate
 
     raise MissingSmokeScript(
@@ -369,7 +373,7 @@ def prepare_run(task: TaskSpec, repo_root: str | Path, prepare_only: bool) -> Ru
     run_dir = root / "agent-docs" / "runs" / task.id / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
 
-    smoke_script = infer_smoke_script(task, root)
+    smoke_script = infer_smoke_script(task, root, require_exists=False)
     skills = discover_skills(root, task)
     context = RunContext(
         task=task,
@@ -391,8 +395,10 @@ def prepare_run(task: TaskSpec, repo_root: str | Path, prepare_only: bool) -> Ru
             "verification": {
                 "smoke_script": str(smoke_script),
                 "test_commands": task.test_commands,
+                "test_commands_missing": "test_commands" not in task.frontmatter,
                 "runner_owned": True,
             },
+            "agents": _agent_manifest(context),
             "skills": [_skill_json(skill) for skill in skills],
         },
     )
@@ -433,6 +439,15 @@ def verify_task(
             name="diff_scope",
             passed=not violations,
             details={"changed_files": changed_files, "violations": violations},
+        )
+    )
+
+    test_commands_defined = "test_commands" in task.frontmatter
+    gates.append(
+        GateResult(
+            name="test_commands_defined",
+            passed=test_commands_defined,
+            details={} if test_commands_defined else {"error": "task frontmatter missing test_commands"},
         )
     )
 
@@ -500,8 +515,8 @@ def verify_task(
 
 def collect_changed_files(repo_root: str | Path) -> list[str]:
     root = Path(repo_root).resolve()
-    tracked = _git_lines(root, ["git", "diff", "--name-only", "--diff-filter=ACMRT"])
-    staged = _git_lines(root, ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMRT"])
+    tracked = _git_lines(root, ["git", "diff", "--name-only"])
+    staged = _git_lines(root, ["git", "diff", "--cached", "--name-only"])
     untracked = _git_lines(root, ["git", "ls-files", "--others", "--exclude-standard"])
     return sorted(set(tracked + staged + untracked))
 
@@ -638,7 +653,7 @@ You are the maker agent for this local agent-docs loop run.
 
 ## Test commands the runner will execute
 
-{_bullet(task.test_commands)}
+{_test_command_bullets(task)}
 
 ## Smoke script the runner will execute
 
@@ -694,7 +709,7 @@ Return exactly one verdict:
 
 ## Test commands
 
-{_bullet(task.test_commands)}
+{_test_command_bullets(task)}
 
 ## Smoke script
 
@@ -755,20 +770,67 @@ def _skill_json(skill: SkillSummary) -> dict[str, Any]:
     }
 
 
+def _agent_manifest(context: RunContext) -> dict[str, dict[str, Any]]:
+    selected_skills = [_skill_json(skill) for skill in context.skills]
+    return {
+        "maker": _agent_json(
+            context,
+            role_skill_name="agent-docs-maker",
+            prompt_filename="maker-prompt.md",
+            selected_skills=selected_skills,
+        ),
+        "verifier": _agent_json(
+            context,
+            role_skill_name="agent-docs-verifier",
+            prompt_filename="verifier-prompt.md",
+            selected_skills=selected_skills,
+        ),
+        "reflection": _agent_json(
+            context,
+            role_skill_name="agent-docs-reflection",
+            prompt_filename="reflection-prompt.md",
+            selected_skills=[],
+        ),
+    }
+
+
+def _agent_json(
+    context: RunContext,
+    *,
+    role_skill_name: str,
+    prompt_filename: str,
+    selected_skills: list[dict[str, Any]],
+) -> dict[str, Any]:
+    role_skill = _role_skill_path(context, role_skill_name)
+    return {
+        "prompt": str(context.run_dir / prompt_filename),
+        "role_skill": str(role_skill) if role_skill else None,
+        "role_skill_name": role_skill_name,
+        "selected_skills": selected_skills,
+    }
+
+
 def _skill_bullets(skills: list[SkillSummary]) -> str:
     if not skills:
         return "- None"
     return "\n".join(f"- `{skill.name}`: {skill.path} — {skill.description}" for skill in skills)
 
 
-def _role_skill_bullet(context: RunContext, skill_name: str) -> str:
+def _role_skill_path(context: RunContext, skill_name: str) -> Path | None:
     candidates = [
         context.task.repo_root / "agent-docs" / "skills" / skill_name / "SKILL.md",
         CORE_SKILLS_DIR / skill_name / "SKILL.md",
     ]
     for path in candidates:
         if path.exists():
-            return f"- Read `{path}` before doing this role."
+            return path
+    return None
+
+
+def _role_skill_bullet(context: RunContext, skill_name: str) -> str:
+    path = _role_skill_path(context, skill_name)
+    if path:
+        return f"- Read `{path}` before doing this role."
     return f"- `{skill_name}` not found in repo-local or agent-core skills."
 
 
@@ -776,6 +838,15 @@ def _bullet(items: list[str]) -> str:
     if not items:
         return "- None"
     return "\n".join(f"- `{item}`" for item in items)
+
+
+def _test_command_bullets(task: TaskSpec) -> str:
+    if "test_commands" not in task.frontmatter:
+        return (
+            "- Missing from task frontmatter. Derive the commands, add "
+            "`test_commands` to the task doc, and run them before handoff."
+        )
+    return _bullet(task.test_commands)
 
 
 def _decode_timeout_output(value: bytes | str | None) -> str:
