@@ -20,6 +20,7 @@ from loop.runner import (  # noqa: E402
     MissingSmokeScript,
     ProjectConfigError,
     check_allowed_paths,
+    collect_changed_files,
     discover_skills,
     filter_baseline_changed_files,
     infer_smoke_script,
@@ -108,6 +109,29 @@ loop:
     assert task.loop.skills == ["api-task"]
 
 
+def test_load_task_allows_missing_test_commands_for_preparation(tmp_path: Path) -> None:
+    task_path = write_task(
+        tmp_path,
+        """---
+id: PR-99
+title: Demo Loop Task
+status: todo
+allowed_paths:
+  - agent-docs/smoke-tests/PR-99-demo.sh
+read_first: []
+rollback: Revert demo changes.
+---
+
+# PR-99
+""",
+    )
+
+    task = load_task(task_path, tmp_path)
+
+    assert task.test_commands == []
+    assert "test_commands" not in task.frontmatter
+
+
 def test_infer_smoke_script_prefers_exact_allowed_path(tmp_path: Path) -> None:
     smoke = tmp_path / "agent-docs" / "smoke-tests" / "PR-99-demo.sh"
     smoke.parent.mkdir(parents=True)
@@ -154,6 +178,33 @@ rollback: Revert demo changes.
 
     task = load_task(task_path, tmp_path)
 
+    with pytest.raises(MissingSmokeScript):
+        infer_smoke_script(task, tmp_path)
+
+
+def test_infer_smoke_script_can_name_future_smoke_script(tmp_path: Path) -> None:
+    task_path = write_task(
+        tmp_path,
+        """---
+id: PR-99
+title: Demo Loop Task
+status: todo
+allowed_paths:
+  - agent-docs/smoke-tests/**
+read_first: []
+test_commands: []
+rollback: Revert demo changes.
+---
+
+# PR-99
+""",
+    )
+
+    task = load_task(task_path, tmp_path)
+
+    assert infer_smoke_script(task, tmp_path, require_exists=False) == (
+        tmp_path / "agent-docs" / "smoke-tests" / "PR-99-demo.sh"
+    )
     with pytest.raises(MissingSmokeScript):
         infer_smoke_script(task, tmp_path)
 
@@ -236,6 +287,22 @@ def test_filter_baseline_changed_files_ignores_preexisting_dirty_files() -> None
         ["agent-docs/loop/runner.py", "preexisting.txt"],
         ["preexisting.txt"],
     ) == ["agent-docs/loop/runner.py"]
+
+
+def test_collect_changed_files_includes_deleted_tracked_files(tmp_path: Path) -> None:
+    deleted = tmp_path / "src" / "outside_allowed.py"
+    deleted.parent.mkdir()
+    deleted.write_text("old\n", encoding="utf-8")
+    for command in (
+        ["git", "init", "-q"],
+        ["git", "add", "-A"],
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"],
+    ):
+        subprocess.run(command, cwd=tmp_path, check=True)
+
+    deleted.unlink()
+
+    assert collect_changed_files(tmp_path) == ["src/outside_allowed.py"]
 
 
 def test_discover_skills_matches_explicit_and_keywords(tmp_path: Path) -> None:
@@ -370,6 +437,37 @@ rollback: Revert demo changes.
     assert run_json["prepare_only"] is True
     assert run_json["verification"]["smoke_script"] == str(smoke)
     assert "python -c" in (run.run_dir / "maker-prompt.md").read_text(encoding="utf-8")
+
+
+def test_prepare_run_allows_fresh_task_without_smoke_or_test_commands(tmp_path: Path) -> None:
+    task_path = write_task(
+        tmp_path,
+        """---
+id: PR-99
+title: Demo Loop Task
+status: todo
+allowed_paths:
+  - agent-docs/smoke-tests/**
+read_first:
+  - agent-docs/TESTING.md
+rollback: Revert demo changes.
+---
+
+# PR-99
+""",
+    )
+
+    task = load_task(task_path, tmp_path)
+    run = prepare_run(task, tmp_path, prepare_only=True)
+
+    expected_smoke = tmp_path / "agent-docs" / "smoke-tests" / "PR-99-demo.sh"
+    run_json = json.loads((run.run_dir / "run.json").read_text(encoding="utf-8"))
+    maker_prompt = (run.run_dir / "maker-prompt.md").read_text(encoding="utf-8")
+
+    assert run.smoke_script == expected_smoke
+    assert run_json["verification"]["smoke_script"] == str(expected_smoke)
+    assert run_json["verification"]["test_commands_missing"] is True
+    assert "Missing from task frontmatter" in maker_prompt
 
 
 def test_prepare_run_writes_agent_manifest_to_run_json(tmp_path: Path) -> None:
@@ -544,6 +642,62 @@ def smoke_gate(result) -> object:
     return next(gate for gate in result.gates if gate.name == "smoke_execution")
 
 
+def test_verify_task_requires_smoke_script_to_exist(tmp_path: Path) -> None:
+    task_path = write_task(
+        tmp_path,
+        """---
+id: PR-99
+title: Demo Loop Task
+status: todo
+allowed_paths:
+  - agent-docs/smoke-tests/PR-99-demo.sh
+read_first: []
+test_commands: []
+rollback: Revert demo changes.
+---
+
+# PR-99
+""",
+    )
+
+    task = load_task(task_path, tmp_path)
+    result = verify_task(task, tmp_path, tmp_path / "run")
+
+    smoke_exists_gate = next(gate for gate in result.gates if gate.name == "smoke_script_exists")
+    assert not smoke_exists_gate.passed
+    assert not smoke_gate(result).passed
+    assert result.status == "failed"
+
+
+def test_verify_task_fails_when_test_commands_frontmatter_missing(tmp_path: Path) -> None:
+    smoke = tmp_path / "agent-docs" / "smoke-tests" / "PR-99-demo.sh"
+    smoke.parent.mkdir(parents=True)
+    smoke.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    task_path = write_task(
+        tmp_path,
+        """---
+id: PR-99
+title: Demo Loop Task
+status: todo
+allowed_paths:
+  - agent-docs/smoke-tests/PR-99-demo.sh
+read_first: []
+rollback: Revert demo changes.
+---
+
+# PR-99
+""",
+    )
+
+    task = load_task(task_path, tmp_path)
+    result = verify_task(task, tmp_path, tmp_path / "run")
+
+    test_commands_gate = next(gate for gate in result.gates if gate.name == "test_commands_defined")
+    assert not test_commands_gate.passed
+    assert smoke_gate(result).passed
+    assert result.status == "failed"
+
+
 def test_load_project_config_defaults_when_missing(tmp_path: Path) -> None:
     config = load_project_config(tmp_path)
 
@@ -711,8 +865,6 @@ rollback: Revert demo changes.
 
 
 def test_verify_task_ignores_runner_owned_run_artifacts(tmp_path: Path) -> None:
-    import subprocess
-
     task_path = write_verifiable_task(tmp_path, "#!/usr/bin/env bash\nexit 0\n")
     for command in (
         ["git", "init", "-q"],
@@ -728,3 +880,26 @@ def test_verify_task_ignores_runner_owned_run_artifacts(tmp_path: Path) -> None:
     diff_gate = next(gate for gate in result.gates if gate.name == "diff_scope")
     assert diff_gate.passed, diff_gate.details
     assert result.status == "needs_verifier"
+
+
+def test_verify_task_flags_deleted_file_outside_allowed_paths(tmp_path: Path) -> None:
+    task_path = write_verifiable_task(tmp_path, "#!/usr/bin/env bash\nexit 0\n")
+    outside_allowed = tmp_path / "src" / "outside_allowed.py"
+    outside_allowed.parent.mkdir()
+    outside_allowed.write_text("old\n", encoding="utf-8")
+    for command in (
+        ["git", "init", "-q"],
+        ["git", "add", "-A"],
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"],
+    ):
+        subprocess.run(command, cwd=tmp_path, check=True)
+    outside_allowed.unlink()
+
+    task = load_task(task_path, tmp_path)
+    result = verify_task(task, tmp_path, tmp_path / "run")
+
+    diff_gate = next(gate for gate in result.gates if gate.name == "diff_scope")
+    assert not diff_gate.passed
+    assert diff_gate.details["changed_files"] == ["src/outside_allowed.py"]
+    assert diff_gate.details["violations"] == ["src/outside_allowed.py"]
+    assert result.status == "failed"

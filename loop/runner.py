@@ -447,7 +447,11 @@ def verify_task(
         GateResult(
             name="test_commands_defined",
             passed=test_commands_defined,
-            details={} if test_commands_defined else {"error": "task frontmatter missing test_commands"},
+            details=(
+                {}
+                if test_commands_defined
+                else {"error": "task frontmatter missing test_commands"}
+            ),
         )
     )
 
