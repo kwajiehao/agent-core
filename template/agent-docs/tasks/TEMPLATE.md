@@ -8,6 +8,12 @@ allowed_paths:
   - <test dir>/**
 test_commands:
   - <command that verifies this task>
+# coordination:
+#   mode: solo | review | delegated
+#   maker:
+#     characterization: <required for delegated; task-specific maker expertise>
+#   reviewer:
+#     characterization: <required for review/delegated; task-specific review expertise>
 # smoke_command: <optional end-to-end command>
 ---
 
@@ -22,6 +28,8 @@ test_commands:
 1. <Observable condition>
 2. `test_commands` pass.
 3. `smoke_command` passes, if defined.
+4. Required coordination artifacts pass, if `coordination.mode` is `review` or
+   `delegated`.
 
 ## Handoff
 
