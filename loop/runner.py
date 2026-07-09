@@ -805,6 +805,20 @@ If using subagents, keep their briefs and findings in:
 
 {context.run_dir / "subagents"}
 
+## Simplify Pass
+
+Before final verification, run the simplify pass:
+
+- In Claude Code: `/simplify`
+- Outside Claude Code:
+
+```bash
+claude --model opus-4.8 -p "/simplify" --output-format stream-json --include-partial-messages
+```
+
+If the simplify pass changes files, include those changes in required review and
+rerun the task's test/smoke commands before final verification.
+
 ## Verification
 
 After editing, run:

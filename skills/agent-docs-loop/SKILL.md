@@ -1,6 +1,6 @@
 ---
 name: agent-docs-loop
-description: Use when a user wants a coding agent to create, intake, or run an agent-docs task through the simplified run_task.py loop, including asking the user what to build, choosing solo/review/delegated coordination, generating the task doc, confirming it, and then executing prepare/edit/verify.
+description: Use when a user wants a coding agent to create, intake, or run an agent-docs task through the simplified run_task.py loop, including asking what to build, choosing solo/review/delegated coordination, generating and confirming the task doc, then executing prepare/edit/simplify/review/verify.
 ---
 
 # Agent-Docs Loop
@@ -9,7 +9,8 @@ Use this skill in either mode:
 
 - No task doc yet: run intake, create the task doc, confirm it with the user,
   then execute it.
-- Task doc already exists: prepare, edit, and verify that task.
+- Task doc already exists: prepare, edit, simplify, review, and verify that
+  task.
 
 ## Intake Mode
 
@@ -83,12 +84,20 @@ Use this when the user asks to implement an `agent-docs/tasks/<name>.md` task.
    `CODING.md`, and `TESTING.md`.
 3. Follow the generated `coordination.mode`:
    - `solo`: the coordinator may implement directly.
-   - `review`: the coordinator may implement directly, then must invoke a
-     reviewer and record `subagents/reviewer.md`.
-   - `delegated`: the coordinator must invoke a maker, then a reviewer, and
-     record `subagents/maker.md` plus `subagents/reviewer.md`.
-4. Run the task's `test_commands` and optional `smoke_command`.
-5. Verify with the runner:
+   - `review`: the coordinator may implement directly; reviewer approval is
+     required after the simplify pass.
+   - `delegated`: the coordinator must invoke a maker; reviewer approval is
+     required after the simplify pass.
+4. Run the simplify pass after implementation and before required review:
+   - In Claude Code: `/simplify`
+   - Outside Claude Code:
+     ```bash
+     claude --model opus-4.8 -p "/simplify" --output-format stream-json --include-partial-messages
+     ```
+   If the simplify pass changes files, include those changes in the review and
+   final verification.
+5. Run the task's `test_commands` and optional `smoke_command`.
+6. Verify with the runner:
    ```bash
    uv --project <agent-core> run python <agent-core>/loop/run_task.py agent-docs/tasks/<name>.md --repo-root <target-repo> --verify-only --run-dir <run-dir>
    ```

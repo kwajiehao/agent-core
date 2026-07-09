@@ -319,6 +319,8 @@ def test_install_skills_script_installs_repo_local_skill(tmp_path: Path) -> None
             str(install_skills_script()),
             "--dest",
             str(tmp_path / "skills"),
+            "--claude-dir",
+            str(tmp_path / "claude"),
         ],
         check=True,
         capture_output=True,
@@ -327,7 +329,7 @@ def test_install_skills_script_installs_repo_local_skill(tmp_path: Path) -> None
 
     installed = tmp_path / "skills" / "agent-docs-loop" / "SKILL.md"
     assert installed.exists()
-    assert "installed: agent-docs-loop" in result.stdout
+    assert "codex:installed: skill:agent-docs-loop" in result.stdout
 
 
 def test_install_skills_script_skips_existing_skill(tmp_path: Path) -> None:
@@ -338,6 +340,8 @@ def test_install_skills_script_skips_existing_skill(tmp_path: Path) -> None:
             str(install_skills_script()),
             "--dest",
             str(destination),
+            "--claude-dir",
+            str(tmp_path / "claude"),
         ],
         check=True,
     )
@@ -348,13 +352,15 @@ def test_install_skills_script_skips_existing_skill(tmp_path: Path) -> None:
             str(install_skills_script()),
             "--dest",
             str(destination),
+            "--claude-dir",
+            str(tmp_path / "claude"),
         ],
         check=True,
         capture_output=True,
         text=True,
     )
 
-    assert "skipped-existing: agent-docs-loop" in result.stdout
+    assert "codex:skipped-existing: skill:agent-docs-loop" in result.stdout
 
 
 def test_install_skills_script_force_replaces_existing_skill(tmp_path: Path) -> None:
@@ -369,6 +375,8 @@ def test_install_skills_script_force_replaces_existing_skill(tmp_path: Path) -> 
             str(install_skills_script()),
             "--dest",
             str(destination),
+            "--claude-dir",
+            str(tmp_path / "claude"),
             "--force",
         ],
         check=True,
@@ -376,9 +384,56 @@ def test_install_skills_script_force_replaces_existing_skill(tmp_path: Path) -> 
         text=True,
     )
 
-    assert "replaced: agent-docs-loop" in result.stdout
+    assert "codex:replaced: skill:agent-docs-loop" in result.stdout
     assert not (skill_dir / "stale.txt").exists()
     assert (skill_dir / "SKILL.md").exists()
+
+
+def test_install_skills_script_installs_claude_skill_and_command(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(install_skills_script()),
+            "--dest",
+            str(tmp_path / "codex-skills"),
+            "--claude-dir",
+            str(tmp_path / "claude"),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    skill = tmp_path / "claude" / "skills" / "agent-docs-loop" / "SKILL.md"
+    command = tmp_path / "claude" / "commands" / "agent-docs-loop.md"
+    assert skill.exists()
+    assert command.exists()
+    assert "claude:installed: skill:agent-docs-loop" in result.stdout
+    assert "claude:installed: command:agent-docs-loop" in result.stdout
+    command_text = command.read_text(encoding="utf-8")
+    assert str(skill) in command_text
+    assert "Intake Mode" in command_text
+
+
+def test_install_skills_script_defaults_to_all_agents_with_temp_dirs(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(install_skills_script()),
+            "--dest",
+            str(tmp_path / "codex-skills"),
+            "--claude-dir",
+            str(tmp_path / "claude"),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert (tmp_path / "codex-skills" / "agent-docs-loop" / "SKILL.md").exists()
+    assert (tmp_path / "claude" / "skills" / "agent-docs-loop" / "SKILL.md").exists()
+    assert "codex:installed: skill:agent-docs-loop" in result.stdout
+    assert "claude:installed: command:agent-docs-loop" in result.stdout
 
 
 def test_prepare_run_writes_single_prompt_and_run_json(tmp_path: Path) -> None:
@@ -402,6 +457,7 @@ def test_prepare_run_writes_single_prompt_and_run_json(tmp_path: Path) -> None:
     assert "handoff.md" in prompt
     assert "subagents" in prompt
     assert "Mode: `solo`" in prompt
+    assert "claude --model opus-4.8 -p \"/simplify\"" in prompt
 
 
 def test_prepare_run_writes_delegated_role_characterizations(tmp_path: Path) -> None:

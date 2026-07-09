@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ABOUTME: Installs this repo's Codex skills into the user's Codex skills dir.
+# ABOUTME: Installs this repo's local agent skills for supported coding agents.
 # ABOUTME: Copies repo-local skills safely, skipping existing installs by default.
 
 from __future__ import annotations
@@ -13,15 +13,17 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class SkillInstall:
+    agent: str
     name: str
     source: Path
     destination: Path
     status: str
+    kind: str = "skill"
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Install this repo's local Codex skills."
+        description="Install this repo's local agent skills."
     )
     parser.add_argument(
         "--source",
@@ -32,8 +34,19 @@ def main() -> int:
     parser.add_argument(
         "--dest",
         type=Path,
-        default=_default_skills_dir(),
-        help="Destination skills directory; defaults to ${CODEX_HOME:-~/.codex}/skills",
+        help="Codex skills destination. Alias for --codex-dest.",
+    )
+    parser.add_argument(
+        "--codex-dest",
+        type=Path,
+        default=_default_codex_skills_dir(),
+        help="Codex skills destination; defaults to ${CODEX_HOME:-~/.codex}/skills",
+    )
+    parser.add_argument(
+        "--claude-dir",
+        type=Path,
+        default=_default_claude_dir(),
+        help="Claude config directory; defaults to ${CLAUDE_HOME:-~/.claude}",
     )
     parser.add_argument(
         "--skill",
@@ -53,19 +66,35 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    installs = install_skills(
-        source_dir=args.source,
-        dest_dir=args.dest,
-        requested=args.skill,
-        force=args.force,
-        dry_run=args.dry_run,
+    installs: list[SkillInstall] = []
+    codex_dest = args.dest if args.dest is not None else args.codex_dest
+    installs.extend(
+        install_codex_skills(
+            source_dir=args.source,
+            dest_dir=codex_dest,
+            requested=args.skill,
+            force=args.force,
+            dry_run=args.dry_run,
+        )
+    )
+    installs.extend(
+        install_claude_assets(
+            source_dir=args.source,
+            claude_dir=args.claude_dir,
+            requested=args.skill,
+            force=args.force,
+            dry_run=args.dry_run,
+        )
     )
     for install in installs:
-        print(f"{install.status}: {install.name} -> {install.destination}")
+        print(
+            f"{install.agent}:{install.status}: "
+            f"{install.kind}:{install.name} -> {install.destination}"
+        )
     return 0
 
 
-def install_skills(
+def install_codex_skills(
     *,
     source_dir: Path,
     dest_dir: Path,
@@ -90,6 +119,7 @@ def install_skills(
             if not force:
                 installs.append(
                     SkillInstall(
+                        agent="codex",
                         name=name,
                         source=skill_source,
                         destination=skill_dest,
@@ -108,6 +138,7 @@ def install_skills(
 
         installs.append(
             SkillInstall(
+                agent="codex",
                 name=name,
                 source=skill_source,
                 destination=skill_dest,
@@ -116,6 +147,161 @@ def install_skills(
         )
 
     return installs
+
+
+def install_claude_assets(
+    *,
+    source_dir: Path,
+    claude_dir: Path,
+    requested: list[str],
+    force: bool = False,
+    dry_run: bool = False,
+) -> list[SkillInstall]:
+    source = source_dir.resolve()
+    root = _repo_root()
+    claude_root = claude_dir.expanduser().resolve()
+    skills = _discover_skills(source, requested)
+    if not skills:
+        raise SystemExit(f"No skills found in {source}")
+
+    installs: list[SkillInstall] = []
+    claude_skills = claude_root / "skills"
+    claude_commands = claude_root / "commands"
+    if not dry_run:
+        claude_skills.mkdir(parents=True, exist_ok=True)
+        claude_commands.mkdir(parents=True, exist_ok=True)
+
+    for name, skill_source in skills.items():
+        skill_dest = claude_skills / name
+        installs.append(
+            _copy_skill(
+                agent="claude",
+                name=name,
+                source=skill_source,
+                destination=skill_dest,
+                force=force,
+                dry_run=dry_run,
+            )
+        )
+        command_dest = claude_commands / f"{name}.md"
+        installs.append(
+            _write_claude_command(
+                name=name,
+                skill_path=skill_dest / "SKILL.md",
+                agent_core_root=root,
+                destination=command_dest,
+                force=force,
+                dry_run=dry_run,
+            )
+        )
+
+    return installs
+
+
+def _copy_skill(
+    *,
+    agent: str,
+    name: str,
+    source: Path,
+    destination: Path,
+    force: bool,
+    dry_run: bool,
+) -> SkillInstall:
+    status = "installed"
+    if destination.exists():
+        if not force:
+            return SkillInstall(
+                agent=agent,
+                name=name,
+                source=source,
+                destination=destination,
+                status="skipped-existing",
+            )
+        status = "replaced"
+        if not dry_run:
+            shutil.rmtree(destination)
+
+    if dry_run:
+        status = "would-replace" if destination.exists() and force else "would-install"
+    else:
+        shutil.copytree(source, destination)
+
+    return SkillInstall(
+        agent=agent,
+        name=name,
+        source=source,
+        destination=destination,
+        status=status,
+    )
+
+
+def _write_claude_command(
+    *,
+    name: str,
+    skill_path: Path,
+    agent_core_root: Path,
+    destination: Path,
+    force: bool,
+    dry_run: bool,
+) -> SkillInstall:
+    status = "installed"
+    if destination.exists():
+        if not force:
+            return SkillInstall(
+                agent="claude",
+                name=name,
+                source=skill_path,
+                destination=destination,
+                status="skipped-existing",
+                kind="command",
+            )
+        status = "replaced"
+
+    if dry_run:
+        status = "would-replace" if destination.exists() and force else "would-install"
+    else:
+        destination.write_text(
+            _claude_command(name, skill_path, agent_core_root),
+            encoding="utf-8",
+        )
+
+    return SkillInstall(
+        agent="claude",
+        name=name,
+        source=skill_path,
+        destination=destination,
+        status=status,
+        kind="command",
+    )
+
+
+def _claude_command(name: str, skill_path: Path, agent_core_root: Path) -> str:
+    return f"""---
+description: Run the {name} workflow from agent-core.
+---
+
+Read and follow this installed skill:
+
+```text
+{skill_path}
+```
+
+Use this agent-core checkout for `<agent-core>` command placeholders:
+
+```text
+{agent_core_root}
+```
+
+If the user has not provided an `agent-docs/tasks/*.md` file, run the skill's
+Intake Mode. If the user has provided a task file, run Execution Mode.
+
+Treat the current working directory as `<target-repo>` unless the user gives a
+different repo path.
+
+User request:
+
+$ARGUMENTS
+"""
 
 
 def _discover_skills(source_dir: Path, requested: list[str]) -> dict[str, Path]:
@@ -136,11 +322,18 @@ def _discover_skills(source_dir: Path, requested: list[str]) -> dict[str, Path]:
     return {name: available[name] for name in requested}
 
 
-def _default_skills_dir() -> Path:
+def _default_codex_skills_dir() -> Path:
     codex_home = os.environ.get("CODEX_HOME")
     if codex_home:
         return Path(codex_home) / "skills"
     return Path.home() / ".codex" / "skills"
+
+
+def _default_claude_dir() -> Path:
+    claude_home = os.environ.get("CLAUDE_HOME")
+    if claude_home:
+        return Path(claude_home)
+    return Path.home() / ".claude"
 
 
 def _repo_root() -> Path:
