@@ -1,81 +1,183 @@
 # Agent Core
 
-A repo-agnostic task loop for autonomous agentic coding. It turns a task doc
-with machine-readable guardrails into a controlled maker → runner-verification
-→ verifier → reflection workflow, where the loop authors its own regression
-tests and smoke tests and final acceptance is tied to runner-owned evidence,
-not agent self-reports.
+A small repo-agnostic task runner for agentic coding.
 
-## The loop
+It has one job: turn a task doc into a run directory, then verify that the
+result stayed in scope and passed the commands declared by the task.
 
-```
-task doc ──► maker (TDD, writes smoke test) ──► runner gates (diff scope,
-tests, smoke against live stack) ──► fresh verifier ──► reflection (skills)
+## Flow
+
+```text
+task.md -> prompt.md -> agent edits -> runner verifies diff + tests + optional smoke
 ```
 
-Three properties make it safe to run autonomously:
+The runner does not manage agents, start services, infer smoke scripts, or
+accept self-reported results. Repo-specific setup belongs in the task's own
+commands.
 
-- **Guardrails are data.** Each task's frontmatter declares `allowed_paths`,
-  `test_commands`, `read_first`, and `rollback`. The runner enforces them
-  deterministically — the maker cannot widen its own scope.
-- **The loop generates its own verification.** The maker must write a failing
-  test before code and a smoke script exercising the live behavior. A task
-  without verification is authored into one before implementation starts.
-- **Acceptance is separated from implementation.** The maker cannot mark a
-  task done; the verifier cannot override failed runner gates.
+## Task Schema
 
-## Layout
+Task files are markdown files with YAML frontmatter:
 
-| Path | Purpose |
-|---|---|
-| `WORKFLOW.md` | The core loop every task follows |
-| `CODING.md` | General implementation principles |
-| `TESTING.md` | General regression- and smoke-test conventions |
-| `skills/` | Role skills: loop coordinator, maker, verifier, reflection |
-| `loop/` | The runner: prepares run prompts, executes verification gates |
-| `template/agent-docs/` | Skeleton to copy into a consuming repo |
+```yaml
+---
+id: PR-12
+title: Fix search pagination
+read_first:
+  - README.md
+allowed_paths:
+  - src/search/**
+  - tests/search/**
+test_commands:
+  - pytest tests/search/test_pagination.py
+smoke_command: ./scripts/smoke-search.sh   # optional
+---
+```
 
-## Adopting in a repo
+Required fields:
 
-1. Copy `template/agent-docs/` to `<repo>/agent-docs/`.
-2. Fill in `agent-docs/TESTING.md` with repo specifics: local stack setup,
-   how to run the dev server, connection details, sample fixtures.
-3. Fill in `agent-docs/loop.yaml`: services the smoke gate must bring up and
-   (optionally) the env var holding the API key smoke scripts receive.
-4. Point the repo's `AGENTS.md`/`CLAUDE.md` at this repo's `WORKFLOW.md` and
-   at the repo-local `agent-docs/TESTING.md`.
-5. Write tasks from `agent-docs/tasks/TEMPLATE.md`.
+- `id`
+- `title`
+- `allowed_paths`
+- `test_commands`
 
-The repo-specific layer lives entirely in the consuming repo; this repo holds
-only what is true everywhere.
+Optional fields:
 
-## Running the loop
+- `read_first`
+- `smoke_command`
+
+`test_commands` must contain at least one command for verification to pass.
+
+## Usage
+
+Run from the consuming repo root, or pass `--repo-root`.
 
 ```bash
-# Prepare a run (writes maker/verifier/reflection prompts + run.json)
 python /path/to/agent-core/loop/run_task.py agent-docs/tasks/<name>.md --prepare-run
+```
 
-# Verify a run (diff scope, test commands, smoke against the live stack)
+This writes:
+
+```text
+agent-docs/runs/<task-id>/<run-id>/prompt.md
+agent-docs/runs/<task-id>/<run-id>/run.json
+```
+
+After the agent edits the repo:
+
+```bash
 python /path/to/agent-core/loop/run_task.py agent-docs/tasks/<name>.md \
   --verify-only --run-dir agent-docs/runs/<task-id>/<run-id>
 ```
 
-Run both from the consuming repo's root (or pass `--repo-root`). Artifacts
-land in `<repo>/agent-docs/runs/<task-id>/<run-id>/`.
+Verification writes:
 
-## Agent compatibility
+```text
+tests.json
+smoke.json
+verification.json
+```
 
-Role skills use the `SKILL.md` + YAML frontmatter format, so they load
-directly as Claude Code skills (symlink `skills/*` into `.claude/skills/` or
-reference them by path). The coordinator skill is idempotent per task and
-resumes from run artifacts, so it can be driven by recurring invocation (e.g.
-Claude Code's `/loop`) or by any agent that can run shell commands.
+Each run also has a `handoff.md` file for durable notes while work is in
+progress.
 
-## Extension points
+The CLI exits `0` when verification status is `passed`, `1` when gates fail,
+and `2` when the task/frontmatter is invalid.
 
-- `agent-docs/TESTING.md` — repo setup, dev server, fixtures.
-- `agent-docs/loop.yaml` — services + API key env for the smoke gate.
-- `agent-docs/skills/` — repo-local skills; the runner injects keyword-matched
-  skills into maker/verifier prompts. A repo-local skill with the same name as
-  a role skill overrides it.
-- Task frontmatter `loop:` block — per-task attempt budgets and explicit skills.
+## What Is Enforced
+
+- Changed files, excluding pre-existing dirty files captured at prepare time,
+  must match `allowed_paths`.
+- Every `test_commands` command must pass.
+- `smoke_command`, when present, must pass.
+
+Everything else is normal agent judgment.
+
+## Optional Agent Practices
+
+### Roles
+
+The simplified runner does not create separate maker, verifier, or reflector
+phases.
+
+Those roles still exist as lightweight agent responsibilities:
+
+- Maker: the main agent implementing the task.
+- Verifier: the runner's deterministic gates, plus an optional independent
+  reviewer subagent when the change is risky or ambiguous.
+- Reflector: an optional post-pass check that persists reusable lessons into
+  repo memory or a repo-local skill.
+
+Keep these roles as practices, not required artifacts. The only acceptance
+source is runner verification.
+
+### Subagents
+
+Subagents are useful for isolated implementation attempts, independent review,
+research, or domain-specific investigation. They are not part of the runner's
+contract.
+
+The main agent should invoke a subagent when one of these is true:
+
+- the task asks for independent review, research, or a second implementation
+  attempt
+- a repo-local skill or `AGENTS.md` says a specialized agent should handle that
+  kind of work
+- the task has separable investigation and implementation threads
+- the main agent is stuck and needs a focused hypothesis checked
+- the change is risky enough that an independent reviewer is worth the extra
+  time
+
+When using a subagent, pass it the task doc, `prompt.md`, relevant `read_first`
+files, `allowed_paths`, and current run artifacts. The parent agent remains
+responsible for final edits and runner verification.
+
+Each run contains:
+
+```text
+agent-docs/runs/<task-id>/<run-id>/subagents/
+```
+
+Use that directory for subagent briefs and findings. The parent agent should
+summarize accepted findings back into `handoff.md`.
+
+### Skills
+
+Repo-local skills can live under:
+
+```text
+agent-docs/skills/<skill-name>/SKILL.md
+```
+
+The simplified runner does not auto-discover or inject skills. Reference useful
+skills from `AGENTS.md`, the task body, or `read_first` when they matter.
+
+### Reflection
+
+Reflection is useful after a passed run, but it is not an acceptance gate. A
+simple reflection pass should ask:
+
+- Did this run reveal reusable repo knowledge?
+- Should that knowledge go in `agent-docs/MEMORY.md`, a repo-local skill, or
+  nowhere?
+- Did the task template or docs need clarification?
+
+Only persist lessons that are likely to help future tasks.
+
+### Memory
+
+Use two levels of memory:
+
+- Run memory: `agent-docs/runs/<task-id>/<run-id>/handoff.md` plus JSON command
+  artifacts. This is for resuming interrupted work.
+- Subagent memory: `agent-docs/runs/<task-id>/<run-id>/subagents/*.md`. This is
+  for scoped briefs, findings, evidence, and recommendations from subagents.
+- Repo memory: `agent-docs/MEMORY.md` or repo-local skills. This is for durable
+  lessons that apply across tasks.
+
+## Agent Guidance
+
+- [CODING.md](/Users/kwa/Documents/personal/agent-core/CODING.md) describes
+  implementation principles.
+- [TESTING.md](/Users/kwa/Documents/personal/agent-core/TESTING.md) describes
+  regression and smoke-test conventions.

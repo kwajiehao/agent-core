@@ -1,46 +1,53 @@
 # Testing Conventions
 
-Repo-specific setup (local stack, dev server, connection details, sample
-fixtures) lives in the consuming repo's `agent-docs/TESTING.md`. This file
-holds the conventions that are true everywhere.
+Repo-specific setup, local services, credentials, fixtures, and sample assets
+belong in the consuming repo's docs. This file holds the testing conventions
+that are useful across repos.
 
-## Regression tests
+## Regression Tests
 
 Regression tests should reproduce the observed failure as directly as possible.
 
 Prefer:
+
 - existing repo fixtures/assets
 - the same helper/function path used by production
 - assertions on the specific bad output that caused the bug
+- the narrowest command that exercises the changed behavior
 
 Avoid:
+
 - generated test data when a committed fixture can reproduce the issue
 - broad mocks that skip the failing subsystem
 - asserting implementation details unless the behavior cannot be observed otherwise
+- widening a test command to an expensive suite when a focused command would
+  verify the task
 
-## Smoke tests
+## Smoke Tests
 
-Each task must have a smoke test script in
-`agent-docs/smoke-tests/<task-file-stem>.sh`. Conventions:
+Smoke coverage is optional in the simplified runner. Add `smoke_command` to a
+task when unit/regression tests are not enough to prove the user-facing or
+integration behavior.
 
-- Takes the API key as `$1` when the repo's `loop.yaml` configures
-  `api_key_env`; takes no arguments otherwise
-- Uses a `check()` helper for pass/fail reporting
-- Covers happy and unhappy flows
-- Exits non-zero on failure
-- Never hardcodes API keys or other secrets
+Good smoke commands:
 
-Smoke tests run against the live local stack, not mocks. The runner brings up
-the services declared in `agent-docs/loop.yaml` before executing the script
-and tears down anything it started.
+- run against realistic local setup or a documented dev endpoint
+- cover the main happy path and at least one important unhappy path when cheap
+- exit non-zero on failure
+- allow callers to override fixture paths and ports through environment vars
+- avoid hardcoded secrets
 
-## Fixtures and sample assets
+Keep smoke setup in the command itself or in repo-owned scripts such as
+`scripts/smoke-*.sh`. The runner only executes the command and records the
+result.
 
-When a smoke test needs a real asset (media file, large payload), default to
-one already committed to the repo — the repo's `agent-docs/TESTING.md` lists
-the canonical ones. Smoke tests should let the caller override the path with
-an env var (e.g. `SAMPLE_VIDEO=/path/to/file`) so contributors can supply
-their own. Do not commit copyrighted material to satisfy these tests.
+## Fixtures And Sample Assets
+
+When a smoke or regression test needs a real asset such as media, a payload, or
+a database fixture, default to one already committed to the repo. Let callers
+override the path with an environment variable when practical.
+
+Do not commit copyrighted material solely to satisfy tests.
 
 ## Secrets
 

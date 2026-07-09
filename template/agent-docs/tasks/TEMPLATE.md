@@ -1,42 +1,29 @@
 ---
 id: PR-XX
 title: <title>
-status: todo
-owner: ""                   # agent/person currently working on it
-last_updated: ""            # ISO date
 read_first:
-  - agent-docs/TESTING.md
+  - README.md
 allowed_paths:
-  - <source dir the task may touch>/**
-  - <test dir for the task>/**
-  - agent-docs/smoke-tests/**
+  - <source dir>/**
+  - <test dir>/**
 test_commands:
-  - <command that runs this task's tests>
-rollback: <how to undo this change>
-# loop:                     # optional per-task overrides
-#   max_attempts: 3
-#   skills: [<repo-local skill names to inject>]
+  - <command that verifies this task>
+# smoke_command: <optional end-to-end command>
 ---
 
 # PR-XX: <title>
 
-## What to Build
-<1-2 sentences>
+## Task
 
-## Models
-<request/response or data model signatures, if applicable>
+<What should change?>
 
-## Reuse These
-- `path/to/file:Symbol` — what it does
+## Acceptance
 
-## Acceptance Criteria
-1. <verifiable condition>
-2. Unit tests pass (see frontmatter `test_commands`)
-3. Smoke test script written to `agent-docs/smoke-tests/PR-XX-<name>.sh` and passes against the local stack (see TESTING.md)
-
-## Cannot Verify
-<anything needing manual testing — leave blank if none>
+1. <Observable condition>
+2. `test_commands` pass.
+3. `smoke_command` passes, if defined.
 
 ## Handoff
-<Mutable section. Agent writes here when stopping or handing off:
-commands run, failures seen, next hypothesis, partial progress.>
+
+<Commands run, failures seen, next hypothesis, and partial progress when
+stopping before completion.>

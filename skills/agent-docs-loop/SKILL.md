@@ -1,40 +1,41 @@
 ---
 name: agent-docs-loop
-description: Use when asked to run an agent-docs task through run_task.py, coordinating maker work, runner-owned verification, fresh verifier review, retry, and reflection.
+description: Use when asked to run an agent-docs task through the simplified run_task.py prepare/verify loop.
 ---
 
 # Agent-Docs Loop
 
-Use this when the user says something like "run `run_task.py` for task X" or
-"run the agent-docs loop for `agent-docs/tasks/<name>.md`".
+Use this when the user asks to implement an `agent-docs/tasks/<name>.md` task.
 
-## Role
-
-You are the loop coordinator. Keep deterministic gates in `run_task.py`; use
-agents for implementation judgment and independent review.
-
-## Workflow
-
-1. Read the agent-core `WORKFLOW.md`, this skill, and the task doc.
-2. Prepare a run:
+1. Prepare a run:
    ```bash
    python <agent-core>/loop/run_task.py agent-docs/tasks/<name>.md --prepare-run
    ```
-3. Read the generated `maker-prompt.md` and the `agent-docs-maker` skill.
-4. Act as the maker, or delegate to a maker subagent when available.
-5. After maker work, run runner-owned verification (export the API key env var
-   named in `agent-docs/loop.yaml` first, if the repo configures one):
+2. Read the generated `prompt.md`, the task doc, every `read_first` file,
+   `CODING.md`, and `TESTING.md`.
+3. Implement the smallest correct change inside `allowed_paths`.
+4. Run the task's `test_commands` and optional `smoke_command`.
+5. Verify with the runner:
    ```bash
    python <agent-core>/loop/run_task.py agent-docs/tasks/<name>.md --verify-only --run-dir <run-dir>
    ```
-6. If verification fails, give the maker the failing gate artifacts and retry within the task guardrails.
-7. If verification returns `needs_verifier`, use a fresh verifier pass with `verifier-prompt.md` and the `agent-docs-verifier` skill.
-8. If the verifier returns `accepted`, run reflection using `reflection-prompt.md` and the `agent-docs-reflection` skill.
 
-## Guardrails
+Do not treat agent summaries as verification. Use the runner artifacts as the
+source of truth.
 
-- The maker cannot mark a task done.
-- The verifier cannot override failed runner gates.
-- `--skip-smoke` is diagnostic only; it can never produce acceptance.
-- Do not paste or persist API keys in run artifacts or task docs.
-- If blocked for more than 2 attempts at the same issue, update the task Handoff and stop.
+Role mapping in the simplified loop:
+
+- Maker: the main agent implementing the task.
+- Verifier: the runner gates, with an optional reviewer subagent when useful.
+- Reflector: optional post-pass memory/skill update after runner verification
+  passes.
+
+Invoke subagents when the task requests review/research, repo instructions call
+for a specialized skill, work can split cleanly, the main path is stuck, or risk
+justifies independent review. Subagents and repo-local skills do not change the
+task's `allowed_paths` or acceptance commands.
+
+Keep resume notes in the run's `handoff.md`. Keep subagent briefs and findings
+in the run's `subagents/` directory, then summarize accepted findings back into
+`handoff.md`. After a passed run, reflect only reusable lessons into repo memory
+or a repo-local skill.

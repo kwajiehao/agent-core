@@ -1,15 +1,16 @@
 # Repo-Local Agent Skills
 
-Store skills specific to this repo's task execution here:
+Optional reusable skills can live here:
 
 ```text
 agent-docs/skills/<skill-name>/SKILL.md
 ```
 
-The loop runner discovers these skills by reading their `SKILL.md` frontmatter
-and injects keyword-matched skill paths into maker and verifier prompts. A
-repo-local skill with the same name as an agent-core role skill overrides it.
+The simplified runner does not auto-discover skills. Reference a skill from
+`AGENTS.md`, a task body, or `read_first` when an agent should load it.
 
-Skills created from reflection should only be written after an accepted run,
-and only when the run captured repeated or hard workflow knowledge. Promote a
-skill into agent-core's `skills/` when it is useful across repos.
+Create or update a skill only after a passed run reveals reusable workflow or
+repo knowledge.
+
+When a skill implies subagent work, the parent agent should still keep the
+subagent brief and findings in the current run's `subagents/` directory.
