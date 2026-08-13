@@ -99,7 +99,7 @@ domain, system type, scale, language, or review specialty.
 The intended human interface is the repo-local skill:
 
 ```text
-Use the agent-docs-loop skill to set up and run a task in this repo.
+Use agent-docs-loop for /path/to/target-repo.
 ```
 
 Install the skill once from this repo:
@@ -115,24 +115,33 @@ slash-command adapter at `${CLAUDE_HOME:-~/.claude}/commands/agent-docs-loop.md`
 Use `--force` to replace existing installs, `--codex-dest <dir>` to change the
 Codex destination, or `--claude-dir <dir>` to change the Claude destination.
 
-After installation, start a new agent turn and ask it to use the skill. With
-that prompt, the coding agent should ask what you want changed, ask which
-coordination mode to use, propose the task doc, get your confirmation, generate
-`agent-docs/`, then execute the task.
+After installation, start a new agent turn from the Agent Core checkout and
+provide only the target repository directory. The skill first discovers the
+repository's run state:
+
+- An unfinished or failed run is resumed from its existing task, prompt,
+  handoff, and verification artifacts.
+- If every run passed, the newest completed run is loaded as prior context
+  before the agent handles a new request.
+- If no valid run exists, the agent starts task intake and asks what to build.
+
+Malformed, missing, inconsistent, or repository-escaping artifacts are skipped
+and reported as warnings instead of being trusted.
 
 You should not need to run the CLI yourself for normal use. The CLI exists so
 agents and scripts have a deterministic way to create task docs, prepare runs,
 and verify outcomes.
 
-Start with a normal request such as:
+To resume or recover context, the repository directory is the entire request:
 
 ```text
-Use agent-docs-loop. I want to fix search pagination in this repo.
+Use agent-docs-loop for /Users/me/code/my-repo.
 ```
 
-The installed skill is the agent-facing interface. It handles intake,
-confirmation, task generation, and execution using the workflow in
-`WORKFLOW.md`.
+For a brand-new repository, you can include the requested change in that first
+message or answer the skill's intake question. The installed skill handles
+discovery, intake, confirmation, task generation, and execution using the
+workflow in `WORKFLOW.md`.
 
 ### Verification Commands
 
@@ -149,6 +158,19 @@ command, it should ask you rather than inventing one.
 ## CLI Usage
 
 Run from the consuming repo root, or pass `--repo-root`.
+
+Discover the run to resume from any working directory:
+
+```bash
+uv --project /path/to/agent-core run python /path/to/agent-core/loop/run_task.py \
+  --repo-root /path/to/target-repo --resume
+```
+
+The command emits JSON. `action` is `resume` for the newest run without passing
+verification, `completed_context` for the newest run when all valid runs passed,
+or `intake_required` when no valid run exists. The result includes resolved task,
+run, prompt, handoff, and verification paths plus verification status and any
+warnings. Resume discovery never creates a new run.
 
 Generate a task:
 
@@ -207,8 +229,8 @@ verification.json
 Each run also has a `handoff.md` file for durable notes while work is in
 progress.
 
-The CLI exits `0` when verification status is `passed`, `1` when gates fail,
-and `2` when the task/frontmatter is invalid.
+The CLI exits `0` for resume discovery and when verification status is `passed`,
+`1` when verification gates fail, and `2` when the task/frontmatter is invalid.
 
 ## What Is Enforced
 

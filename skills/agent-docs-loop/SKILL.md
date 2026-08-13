@@ -1,16 +1,46 @@
 ---
 name: agent-docs-loop
-description: Use when a user wants a coding agent to create, intake, or run an agent-docs task through the simplified run_task.py loop, including asking what to build, choosing solo/review/delegated coordination, generating and confirming the task doc, then executing prepare/edit/simplify/review/verify.
+description: Use when a user gives a repository directory or wants a coding agent to resume, create, intake, or run an agent-docs task through run_task.py, including repository discovery, coordination choice, task confirmation, execution, review, and verification.
 ---
 
 # Agent-Docs Loop
 
-Use this skill in either mode:
+Use this skill in these modes:
 
+- Repository directory only: discover and resume prior work or start intake.
 - No task doc yet: run intake, create the task doc, confirm it with the user,
   then execute it.
 - Task doc already exists: prepare, edit, simplify, review, and verify that
   task.
+
+## Repository Mode
+
+When the user provides a repository directory but no task path, treat that
+directory as sufficient input. From the Agent Core checkout, run:
+
+```bash
+uv run python loop/run_task.py --repo-root <target-repo> --resume
+```
+
+If Agent Core is not the current checkout but its path is known, run the same
+command with `uv --project <agent-core>` and the absolute runner path. Do not ask
+for a task path or repeat context already stored in the target repository.
+
+Parse the JSON result and follow its `action`:
+
+- `resume`: surface any warnings, then read `task_path`, `prompt`, `handoff`,
+  and `verification` when it exists. Re-read all task `read_first` files and
+  continue Execution Mode in the returned `run_dir`. Do not call
+  `--prepare-run`; the existing run and its artifacts are the durable context.
+- `completed_context`: surface any warnings and read `task_path`, `handoff`, and
+  the passing `verification`. If the user supplied a new change, continue with
+  Intake Mode for it. If the repository directory was the entire request,
+  summarize the recovered completed state and ask what they want to build next.
+- `intake_required`: surface any warnings, then continue with Intake Mode.
+
+Discovery prefers the newest valid run without passing verification across all
+tasks. Only when every valid run passed does it return the newest completed run
+as context. Never follow paths from a skipped record.
 
 ## Intake Mode
 
@@ -55,9 +85,9 @@ When the user asks to start work but has not provided an
 8. Execute the task using Execution Mode.
 
 Run the command from any working directory. `--project <agent-core>` ensures
-the runner uses agent-core's dependencies. If `<agent-core>/loop/run_task.py` is
-not available in the workspace or known from the skill installation, ask the
-user for the agent-core path.
+the runner uses Agent Core's dependencies. If the current checkout is Agent
+Core, use it directly. Only ask for the Agent Core path when it is neither the
+current checkout nor known from the skill installation.
 
 ## Verification Command Policy
 

@@ -19,6 +19,7 @@ from loop.runner import (  # noqa: E402
     check_allowed_paths,
     collect_changed_files,
     create_task,
+    discover_resume,
     filter_baseline_changed_files,
     load_task,
     main,
@@ -62,6 +63,40 @@ test_commands:
 
 # PR-99
 """,
+    )
+
+
+def write_named_demo_task(repo_root: Path, task_id: str) -> Path:
+    task_path = repo_root / "agent-docs" / "tasks" / f"{task_id}-demo.md"
+    task_path.parent.mkdir(parents=True, exist_ok=True)
+    task_path.write_text(
+        f"""---
+id: {task_id}
+title: Demo {task_id}
+allowed_paths:
+  - src/**
+test_commands:
+  - python -c "print('ok')"
+---
+
+# {task_id}
+""",
+        encoding="utf-8",
+    )
+    return task_path
+
+
+def set_run_created_at(run_dir: Path, created_at: str) -> None:
+    run_json = run_dir / "run.json"
+    payload = json.loads(run_json.read_text(encoding="utf-8"))
+    payload["created_at"] = created_at
+    run_json.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def write_verification(run_dir: Path, status: str) -> None:
+    (run_dir / "verification.json").write_text(
+        json.dumps({"status": status}),
+        encoding="utf-8",
     )
 
 
@@ -412,6 +447,7 @@ def test_install_skills_script_installs_claude_skill_and_command(tmp_path: Path)
     assert "claude:installed: command:agent-docs-loop" in result.stdout
     command_text = command.read_text(encoding="utf-8")
     assert str(skill) in command_text
+    assert "Repository Mode" in command_text
     assert "Intake Mode" in command_text
 
 
@@ -483,6 +519,149 @@ def test_prepare_run_writes_delegated_role_characterizations(tmp_path: Path) -> 
     assert "`subagents/maker.md`" in prompt
     assert "Staff Python engineer with deep CLI runner experience." in subagents_readme
     assert "Principal test-infrastructure reviewer focused on gates." in subagents_readme
+
+
+def test_discover_resume_returns_intake_when_no_valid_runs(tmp_path: Path) -> None:
+    result = discover_resume(tmp_path)
+
+    assert result.action == "intake_required"
+    assert result.repo_root == str(tmp_path)
+    assert result.task_path is None
+    assert result.run_dir is None
+    assert result.verification_status is None
+    assert result.warnings == []
+
+
+def test_discover_resume_prefers_newest_unfinished_run_over_completed_runs(
+    tmp_path: Path,
+) -> None:
+    unfinished_task = load_task(write_named_demo_task(tmp_path, "PR-10"), tmp_path)
+    unfinished = prepare_run(unfinished_task, tmp_path)
+    set_run_created_at(unfinished.run_dir, "2026-01-01T00:00:00+00:00")
+
+    newer_unfinished_task = load_task(write_named_demo_task(tmp_path, "PR-20"), tmp_path)
+    newer_unfinished = prepare_run(newer_unfinished_task, tmp_path)
+    set_run_created_at(newer_unfinished.run_dir, "2026-01-02T00:00:00+00:00")
+
+    completed_task = load_task(write_named_demo_task(tmp_path, "PR-30"), tmp_path)
+    completed = prepare_run(completed_task, tmp_path)
+    set_run_created_at(completed.run_dir, "2026-01-03T00:00:00+00:00")
+    write_verification(completed.run_dir, "passed")
+
+    result = discover_resume(tmp_path)
+
+    assert result.action == "resume"
+    assert result.task_id == "PR-20"
+    assert result.run_dir == str(newer_unfinished.run_dir)
+    assert result.prompt == str(newer_unfinished.run_dir / "prompt.md")
+    assert result.handoff == str(newer_unfinished.run_dir / "handoff.md")
+    assert result.verification == str(newer_unfinished.run_dir / "verification.json")
+    assert result.verification_status == "missing"
+
+
+def test_discover_resume_reports_failed_verification_as_resumable(tmp_path: Path) -> None:
+    task = load_task(write_named_demo_task(tmp_path, "PR-40"), tmp_path)
+    run = prepare_run(task, tmp_path)
+    write_verification(run.run_dir, "failed")
+
+    result = discover_resume(tmp_path)
+
+    assert result.action == "resume"
+    assert result.run_dir == str(run.run_dir)
+    assert result.verification_status == "failed"
+
+
+def test_discover_resume_returns_newest_completed_run_as_context(tmp_path: Path) -> None:
+    older_task = load_task(write_named_demo_task(tmp_path, "PR-50"), tmp_path)
+    older = prepare_run(older_task, tmp_path)
+    set_run_created_at(older.run_dir, "2026-01-01T00:00:00+00:00")
+    write_verification(older.run_dir, "passed")
+
+    newer_task = load_task(write_named_demo_task(tmp_path, "PR-60"), tmp_path)
+    newer = prepare_run(newer_task, tmp_path)
+    set_run_created_at(newer.run_dir, "2026-01-02T00:00:00+00:00")
+    write_verification(newer.run_dir, "passed")
+
+    result = discover_resume(tmp_path)
+
+    assert result.action == "completed_context"
+    assert result.task_id == "PR-60"
+    assert result.run_dir == str(newer.run_dir)
+    assert result.verification_status == "passed"
+
+
+def test_discover_resume_skips_malformed_metadata_and_missing_artifacts(
+    tmp_path: Path,
+) -> None:
+    malformed = tmp_path / "agent-docs" / "runs" / "BAD" / "bad-run"
+    malformed.mkdir(parents=True)
+    (malformed / "run.json").write_text("{not json", encoding="utf-8")
+
+    task = load_task(write_named_demo_task(tmp_path, "PR-70"), tmp_path)
+    missing_artifacts = prepare_run(task, tmp_path)
+    (missing_artifacts.run_dir / "prompt.md").unlink()
+
+    result = discover_resume(tmp_path)
+
+    assert result.action == "intake_required"
+    assert len(result.warnings) == 2
+    assert any("malformed run metadata" in warning for warning in result.warnings)
+    assert any("missing artifacts" in warning for warning in result.warnings)
+
+
+def test_discover_resume_skips_task_paths_outside_repository(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    task = load_task(write_named_demo_task(repo_root, "PR-80"), repo_root)
+    run = prepare_run(task, repo_root)
+    outside_task = tmp_path / "outside-task.md"
+    outside_task.write_text("outside\n", encoding="utf-8")
+    run_json = run.run_dir / "run.json"
+    payload = json.loads(run_json.read_text(encoding="utf-8"))
+    payload["task_path"] = str(outside_task)
+    run_json.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = discover_resume(repo_root)
+
+    assert result.action == "intake_required"
+    assert any("unsafe or missing task path" in warning for warning in result.warnings)
+
+
+def test_discover_resume_rejects_runs_directory_outside_repository(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    (repo_root / "agent-docs").mkdir(parents=True)
+    outside_runs = tmp_path / "outside-runs"
+    outside_runs.mkdir()
+    (repo_root / "agent-docs" / "runs").symlink_to(outside_runs, target_is_directory=True)
+
+    result = discover_resume(repo_root)
+
+    assert result.action == "intake_required"
+    assert result.warnings == [
+        "Skipped agent-docs/runs because it escapes the repository"
+    ]
+
+
+def test_main_discovers_resume_for_repo_outside_current_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    caller = tmp_path / "caller"
+    caller.mkdir()
+    target = tmp_path / "target"
+    target.mkdir()
+    task = load_task(write_named_demo_task(target, "PR-90"), target)
+    run = prepare_run(task, target)
+    monkeypatch.chdir(caller)
+
+    exit_code = main(["--repo-root", str(target), "--resume"])
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["action"] == "resume"
+    assert output["repo_root"] == str(target)
+    assert output["run_dir"] == str(run.run_dir)
 
 
 def test_verify_task_passes_tests_and_skips_missing_smoke(tmp_path: Path) -> None:

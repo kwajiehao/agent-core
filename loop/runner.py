@@ -1,5 +1,5 @@
 # ABOUTME: Implements a small task runner for agent-docs tasks.
-# ABOUTME: Verifies changed-file scope plus task-owned test and smoke commands.
+# ABOUTME: Discovers resumable runs and verifies task-owned completion gates.
 
 from __future__ import annotations
 
@@ -20,6 +20,8 @@ from typing import Any, Literal
 import yaml
 
 CoordinationMode = Literal["solo", "review", "delegated"]
+ResumeAction = Literal["resume", "completed_context", "intake_required"]
+VerificationStatus = Literal["passed", "failed", "missing", "invalid"]
 
 
 class RunnerError(RuntimeError):
@@ -72,6 +74,30 @@ class RunContext:
     task: TaskSpec
     run_id: str
     run_dir: Path
+
+
+@dataclass(frozen=True)
+class ResumeResult:
+    action: ResumeAction
+    repo_root: str
+    task_id: str | None
+    task_path: str | None
+    run_id: str | None
+    run_dir: str | None
+    prompt: str | None
+    handoff: str | None
+    verification: str | None
+    verification_status: VerificationStatus | None
+    warnings: list[str]
+
+    def to_json(self) -> dict[str, Any]:
+        return dataclasses.asdict(self)
+
+
+@dataclass(frozen=True)
+class _ResumeCandidate:
+    created_at: datetime
+    result: ResumeResult
 
 
 @dataclass(frozen=True)
@@ -241,6 +267,35 @@ def prepare_run(task: TaskSpec, repo_root: str | Path) -> RunContext:
     return context
 
 
+def discover_resume(repo_root: str | Path) -> ResumeResult:
+    root = Path(repo_root).resolve()
+    if not root.is_dir():
+        raise RunnerError(f"repository root is not a directory: {root}")
+
+    warnings: list[str] = []
+    runs_root = (root / "agent-docs" / "runs").resolve()
+    if not _is_within(runs_root, root):
+        warnings.append("Skipped agent-docs/runs because it escapes the repository")
+        return _empty_resume_result(root, warnings)
+    candidates: list[_ResumeCandidate] = []
+    if runs_root.is_dir():
+        for run_json in sorted(runs_root.glob("*/*/run.json")):
+            candidate = _resume_candidate(run_json, root, runs_root, warnings)
+            if candidate is not None:
+                candidates.append(candidate)
+
+    if not candidates:
+        return _empty_resume_result(root, warnings)
+
+    unfinished = [
+        candidate
+        for candidate in candidates
+        if candidate.result.verification_status != "passed"
+    ]
+    selected = max(unfinished or candidates, key=_resume_sort_key).result
+    return dataclasses.replace(selected, warnings=warnings)
+
+
 def verify_task(
     task: TaskSpec,
     repo_root: str | Path,
@@ -330,7 +385,7 @@ def filter_baseline_changed_files(current: list[str], baseline: list[str]) -> li
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Create, prepare, or verify an agent-docs task run."
+        description="Discover, create, prepare, or verify an agent-docs task run."
     )
     parser.add_argument("task", nargs="?", help="Path to agent-docs/tasks/<task>.md")
     parser.add_argument("--repo-root", default=".", help="Repository root; defaults to cwd")
@@ -372,12 +427,35 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--force", action="store_true", help="Overwrite an existing generated task")
     parser.add_argument("--prepare-run", action="store_true", help="Generate prompt/run artifacts")
     parser.add_argument("--verify-only", action="store_true", help="Run verification gates")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Discover the target repository's resumable Agent Core run",
+    )
     parser.add_argument("--run-dir", help="Existing run artifact directory for --verify-only")
     parser.add_argument("--timeout-seconds", type=int, default=1_800, help="Per-command timeout")
     args = parser.parse_args(argv)
 
     root = Path(args.repo_root).resolve()
     try:
+        if args.resume:
+            incompatible = any(
+                [
+                    args.task,
+                    args.new_task,
+                    args.prepare_run,
+                    args.verify_only,
+                    args.run_dir,
+                ]
+            )
+            if incompatible:
+                parser.error(
+                    "--resume cannot be combined with a task, --new-task, "
+                    "--prepare-run, --verify-only, or --run-dir"
+                )
+            print(json.dumps(discover_resume(root).to_json(), indent=2, sort_keys=True))
+            return 0
+
         if args.new_task:
             if args.task:
                 parser.error("task path cannot be provided with --new-task")
@@ -400,7 +478,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if not args.task:
-            parser.error("task path is required unless --new-task is used")
+            parser.error("task path is required unless --new-task or --resume is used")
         task = load_task(args.task, root)
 
         if args.verify_only:
@@ -425,6 +503,171 @@ def main(argv: list[str] | None = None) -> int:
     except RunnerError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
+
+
+def _resume_candidate(
+    run_json: Path,
+    repo_root: Path,
+    runs_root: Path,
+    warnings: list[str],
+) -> _ResumeCandidate | None:
+    label = _display_path(run_json, repo_root)
+    run_dir = run_json.parent.resolve()
+    if not _is_within(run_dir, runs_root) or not _is_safe_file(run_json, run_dir):
+        warnings.append(f"Skipped unsafe run metadata: {label}")
+        return None
+
+    try:
+        payload = json.loads(run_json.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        warnings.append(f"Skipped malformed run metadata {label}: {exc}")
+        return None
+    if not isinstance(payload, dict):
+        warnings.append(f"Skipped malformed run metadata {label}: expected an object")
+        return None
+
+    run_id = _required_metadata_string(payload, "run_id")
+    task_id = _required_metadata_string(payload, "task_id")
+    task_value = _required_metadata_string(payload, "task_path")
+    created_value = _required_metadata_string(payload, "created_at")
+    if None in (run_id, task_id, task_value, created_value):
+        warnings.append(f"Skipped malformed run metadata {label}: missing string fields")
+        return None
+    assert run_id is not None
+    assert task_id is not None
+    assert task_value is not None
+    assert created_value is not None
+    if run_id != run_dir.name or task_id != run_dir.parent.name:
+        warnings.append(f"Skipped inconsistent run metadata: {label}")
+        return None
+
+    try:
+        created_at = datetime.fromisoformat(created_value)
+    except ValueError:
+        warnings.append(f"Skipped malformed run metadata {label}: invalid created_at")
+        return None
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=UTC)
+    created_at = created_at.astimezone(UTC)
+
+    task_path = Path(task_value)
+    if not task_path.is_absolute():
+        task_path = repo_root / task_path
+    task_path = task_path.resolve()
+    tasks_root = (repo_root / "agent-docs" / "tasks").resolve()
+    if (
+        not _is_within(tasks_root, repo_root)
+        or not _is_within(task_path, tasks_root)
+        or not task_path.is_file()
+    ):
+        warnings.append(f"Skipped unsafe or missing task path in {label}")
+        return None
+    try:
+        task = load_task(task_path, repo_root)
+    except (RunnerError, OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        warnings.append(f"Skipped invalid task for {label}: {exc}")
+        return None
+    if task.id != task_id:
+        warnings.append(f"Skipped inconsistent task metadata: {label}")
+        return None
+
+    prompt = run_dir / "prompt.md"
+    handoff = run_dir / "handoff.md"
+    if not _is_safe_file(prompt, run_dir) or not _is_safe_file(handoff, run_dir):
+        warnings.append(f"Skipped run with unsafe or missing artifacts: {label}")
+        return None
+
+    verification = run_dir / "verification.json"
+    verification_status = _verification_status(verification, run_dir, label, warnings)
+    if verification_status is None:
+        return None
+    action: ResumeAction = (
+        "completed_context" if verification_status == "passed" else "resume"
+    )
+    result = ResumeResult(
+        action=action,
+        repo_root=str(repo_root),
+        task_id=task_id,
+        task_path=str(task_path),
+        run_id=run_id,
+        run_dir=str(run_dir),
+        prompt=str(prompt),
+        handoff=str(handoff),
+        verification=str(verification),
+        verification_status=verification_status,
+        warnings=[],
+    )
+    return _ResumeCandidate(created_at=created_at, result=result)
+
+
+def _verification_status(
+    verification: Path,
+    run_dir: Path,
+    run_label: str,
+    warnings: list[str],
+) -> VerificationStatus | None:
+    if not verification.exists():
+        return "missing"
+    if not _is_safe_file(verification, run_dir):
+        warnings.append(f"Skipped run with unsafe verification artifact: {run_label}")
+        return None
+    try:
+        payload = json.loads(verification.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        warnings.append(f"Invalid verification artifact for {run_label}: {exc}")
+        return "invalid"
+    if not isinstance(payload, dict) or payload.get("status") not in {"passed", "failed"}:
+        warnings.append(f"Invalid verification status for {run_label}")
+        return "invalid"
+    status = payload["status"]
+    return "passed" if status == "passed" else "failed"
+
+
+def _empty_resume_result(repo_root: Path, warnings: list[str]) -> ResumeResult:
+    return ResumeResult(
+        action="intake_required",
+        repo_root=str(repo_root),
+        task_id=None,
+        task_path=None,
+        run_id=None,
+        run_dir=None,
+        prompt=None,
+        handoff=None,
+        verification=None,
+        verification_status=None,
+        warnings=warnings,
+    )
+
+
+def _resume_sort_key(candidate: _ResumeCandidate) -> tuple[datetime, str, str]:
+    result = candidate.result
+    return (candidate.created_at, result.run_id or "", result.run_dir or "")
+
+
+def _required_metadata_string(payload: dict[str, Any], key: str) -> str | None:
+    value = payload.get(key)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value.strip()
+
+
+def _is_within(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
+def _is_safe_file(path: Path, parent: Path) -> bool:
+    return path.is_file() and _is_within(path.resolve(), parent.resolve())
+
+
+def _display_path(path: Path, repo_root: Path) -> str:
+    try:
+        return path.relative_to(repo_root).as_posix()
+    except ValueError:
+        return str(path)
 
 
 def _read_frontmatter(path: Path) -> tuple[dict[str, Any], str]:

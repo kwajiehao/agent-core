@@ -292,8 +292,10 @@ Use this agent-core checkout for `<agent-core>` command placeholders:
 {agent_core_root}
 ```
 
-If the user has not provided an `agent-docs/tasks/*.md` file, run the skill's
-Intake Mode. If the user has provided a task file, run Execution Mode.
+If the user provides a repository directory without an
+`agent-docs/tasks/*.md` file, run the skill's Repository Mode first. Run
+Intake Mode only when discovery requires it. If the user provides a task file,
+run Execution Mode.
 
 Treat the current working directory as `<target-repo>` unless the user gives a
 different repo path.

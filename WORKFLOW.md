@@ -3,6 +3,34 @@
 This is the canonical task execution guide for agents. The runner verifies
 artifacts and commands; the main agent coordinates the work.
 
+## Repository-Only Entry Point
+
+When the user provides a target repository directory without a task path, run
+resume discovery before intake:
+
+```bash
+uv --project <agent-core> run python <agent-core>/loop/run_task.py \
+  --repo-root <target-repo> --resume
+```
+
+Use the returned `action` as follows:
+
+- `resume`: read the selected task, `prompt.md`, `handoff.md`, and existing
+  verification artifacts. Continue in the same run directory; do not prepare a
+  replacement run. Re-read every task `read_first` file before editing.
+- `completed_context`: read the selected task, handoff, and passing
+  `verification.json` to recover prior context. If the user also requested a new
+  change, enter task intake for that change. If the repository path was the
+  entire request, summarize the recovered state and ask what to build next.
+- `intake_required`: no valid prior run exists. Enter task intake.
+
+Surface `warnings` to the user and do not read records that discovery skipped.
+Discovery intentionally prefers the newest non-passing run across tasks. It
+falls back to the newest passing run only when every valid run passed.
+
+The Agent Core checkout is `<agent-core>` and the user-provided directory is
+`<target-repo>`; they do not need to be the same repository or share a parent.
+
 When asked to work from an `agent-docs/tasks/<name>.md` file:
 
 1. Run `loop/run_task.py <task> --prepare-run`.
