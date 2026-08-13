@@ -5,6 +5,24 @@ A small repo-agnostic task runner for agentic coding.
 It has one job: turn a task doc into a run directory, then verify that the
 result stayed in scope and passed the commands declared by the task.
 
+## Quick Start
+
+From this checkout, install the agent-facing skill once:
+
+```bash
+python scripts/install_skills.py --force
+```
+
+Then start a fresh agent conversation and provide the target repository:
+
+```text
+Use agent-docs-loop for /path/to/target-repo.
+```
+
+Agent Core will resume unfinished work, recover the latest completed context,
+or guide you through creating a new task. To start new work immediately, append
+`Create a new task for: <request>.` See [How To Use](#how-to-use) for details.
+
 ## Roles
 
 Agent Core separates agent orchestration from deterministic verification.
