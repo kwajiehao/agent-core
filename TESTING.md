@@ -4,6 +4,24 @@ Repo-specific setup, local services, credentials, fixtures, and sample assets
 belong in the consuming repo's docs. This file holds the testing conventions
 that are useful across repos.
 
+## Avoid Tautological Tests
+
+Do not write tautological tests: assertions that pass by construction even when
+the production behavior is wrong. Exercise the actual code under test and derive
+expected results independently from the requirement, a known fixture, or a
+trusted reference.
+
+Avoid comparing a result with itself, computing expected values with the same
+production logic being tested, copying that logic into the test, or mocking the
+behavior under test and then asserting the mock's configured return value.
+Mocks may isolate dependencies, but assertions must still verify behavior owned
+by the actual code under test.
+
+Before keeping a test, identify a plausible defect it would catch. For regression
+tests, use the observed failure as that defect and demonstrate a failure before
+the fix when practical. Prefer observable outputs and effects over assertions
+that merely restate implementation details.
+
 ## Regression Tests
 
 Regression tests should reproduce the observed failure as directly as possible.
