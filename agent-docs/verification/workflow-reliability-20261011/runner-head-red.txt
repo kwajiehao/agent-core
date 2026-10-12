@@ -1,0 +1,18 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________ test_missing_head_object_is_not_treated_as_unborn_repository _________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-16/test_missing_head_object_is_no0')
+
+    def test_missing_head_object_is_not_treated_as_unborn_repository(tmp_path: Path) -> None:
+        task = make_task(tmp_path)
+        reference = subprocess.run(["git", "symbolic-ref", "HEAD"], cwd=tmp_path, check=True, capture_output=True, text=True).stdout.strip()
+        (tmp_path / ".git" / reference).write_text("a" * 40 + "\n", encoding="utf-8")
+>       with pytest.raises(runner.RunnerError, match="Git"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE RunnerError
+
+loop/tests/test_reliability.py:354: Failed
+=========================== short test summary info ============================
+FAILED loop/tests/test_reliability.py::test_missing_head_object_is_not_treated_as_unborn_repository
+1 failed, 30 deselected in 0.21s

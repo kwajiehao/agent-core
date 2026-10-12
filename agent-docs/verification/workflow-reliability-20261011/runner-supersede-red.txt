@@ -1,0 +1,27 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________ test_new_prepared_run_supersedes_legacy_attempt_for_same_task _________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-20/test_new_prepared_run_supersed0')
+
+    def test_new_prepared_run_supersedes_legacy_attempt_for_same_task(tmp_path: Path) -> None:
+        task = make_task(tmp_path)
+        legacy = runner.prepare_run(task, tmp_path)
+        metadata_path = legacy.run_dir / "run.json"
+        metadata = json.loads(metadata_path.read_text())
+        metadata.pop("schema_version")
+        metadata["created_at"] = "2020-01-01T00:00:00+00:00"
+        metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+        current = runner.prepare_run(task, tmp_path)
+        assert runner.verify_task(task, tmp_path, current.run_dir).status == "passed"
+        result = runner.discover_resume(tmp_path)
+>       assert result.action == "completed_context"
+E       AssertionError: assert 'resume' == 'completed_context'
+E         
+E         - completed_context
+E         + resume
+
+loop/tests/test_reliability.py:398: AssertionError
+=========================== short test summary info ============================
+FAILED loop/tests/test_reliability.py::test_new_prepared_run_supersedes_legacy_attempt_for_same_task
+1 failed, 35 deselected in 0.19s

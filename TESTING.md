@@ -7,6 +7,9 @@ that are useful across repos.
 ## Regression Tests
 
 Regression tests should reproduce the observed failure as directly as possible.
+Run a new regression before implementation when practical and retain the actual
+failure output. Then verify the correction and relevant existing behavior. A
+test that also passes the defective implementation does not establish the fix.
 
 Prefer:
 
@@ -40,6 +43,27 @@ Good smoke commands:
 Keep smoke setup in the command itself or in repo-owned scripts such as
 `scripts/smoke-*.sh`. The runner only executes the command and records the
 result.
+
+## Acceptance Evidence
+
+Map every required observable condition to a declared test or smoke command in
+task frontmatter. Assert literal user/caller results, including durable effects
+when promised. The runner executes the final commands; earlier focused checks
+are developmental evidence rather than a reason to repeat a full suite twice.
+
+Review approval and passing command records apply to their recorded task and
+code snapshot. Re-review when that snapshot changes. A schema-valid artifact,
+compilation, a filename, or a model's summary is not proof of behavior.
+
+## Workflow Evaluations
+
+Exercise skills with organic requests in isolated repositories and hold expected
+outcomes away from the acting agent. Inspect actual artifacts and actions. Include
+cases where a skill should abstain, reuse current evidence or report uncertainty.
+Record both failures and successes; distinguish tooling unit tests from real
+agent trials. Compare repeated matched trials before making performance claims.
+The shared evaluation runner lives in the sibling agent-skills repository's
+evals directory; it is optional development tooling, not a production dependency.
 
 ## Fixtures And Sample Assets
 

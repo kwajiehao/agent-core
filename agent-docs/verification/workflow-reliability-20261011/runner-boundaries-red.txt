@@ -1,0 +1,119 @@
+.FFF                                                                     [100%]
+=================================== FAILURES ===================================
+__________ test_record_review_reports_invalid_utf8_without_traceback ___________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-18/test_record_review_reports_inv0')
+
+    def test_record_review_reports_invalid_utf8_without_traceback(tmp_path: Path) -> None:
+        task = make_task(tmp_path, review=True)
+        run = runner.prepare_run(task, tmp_path)
+        (run.run_dir / "subagents" / "reviewer.md").write_bytes(b"\xffVerdict: approve")
+        with pytest.raises(runner.RunnerError, match="reviewer"):
+>           runner.record_review(task, tmp_path, run.run_dir)
+
+loop/tests/test_reliability.py:371: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+loop/runner.py:426: in record_review
+    verdict = _reviewer_verdict(artifact.read_text(encoding="utf-8"))
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.13/3.13.5/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:546: in read_text
+    return PathBase.read_text(self, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.13/3.13.5/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_abc.py:633: in read_text
+    return f.read()
+           ^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <encodings.utf_8.IncrementalDecoder object at 0x1066d7e00>
+input = b'\xffVerdict: approve', final = True
+
+>   ???
+E   UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte
+
+<frozen codecs>:325: UnicodeDecodeError
+_________________ test_malformed_yaml_is_a_task_contract_error _________________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-18/test_malformed_yaml_is_a_task_0')
+
+    def test_malformed_yaml_is_a_task_contract_error(tmp_path: Path) -> None:
+        task = make_task(tmp_path)
+        task.path.write_text("---\nid: [unterminated\n---\n", encoding="utf-8")
+        with pytest.raises(runner.FrontmatterError, match="frontmatter"):
+>           runner.load_task(task.path, tmp_path)
+
+loop/tests/test_reliability.py:378: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+loop/runner.py:156: in load_task
+    frontmatter, _ = _read_frontmatter(task_file)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+loop/runner.py:774: in _read_frontmatter
+    raw = yaml.safe_load(parts[1]) or {}
+          ^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/agent-workflow-dev-20261011/lib/python3.13/site-packages/yaml/__init__.py:125: in safe_load
+    return load(stream, SafeLoader)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/agent-workflow-dev-20261011/lib/python3.13/site-packages/yaml/__init__.py:81: in load
+    return loader.get_single_data()
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/agent-workflow-dev-20261011/lib/python3.13/site-packages/yaml/constructor.py:49: in get_single_data
+    node = self.get_single_node()
+           ^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/agent-workflow-dev-20261011/lib/python3.13/site-packages/yaml/composer.py:36: in get_single_node
+    document = self.compose_document()
+               ^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/agent-workflow-dev-20261011/lib/python3.13/site-packages/yaml/composer.py:55: in compose_document
+    node = self.compose_node(None, None)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/agent-workflow-dev-20261011/lib/python3.13/site-packages/yaml/composer.py:84: in compose_node
+    node = self.compose_mapping_node(anchor)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/agent-workflow-dev-20261011/lib/python3.13/site-packages/yaml/composer.py:133: in compose_mapping_node
+    item_value = self.compose_node(node, item_key)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/agent-workflow-dev-20261011/lib/python3.13/site-packages/yaml/composer.py:82: in compose_node
+    node = self.compose_sequence_node(anchor)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/agent-workflow-dev-20261011/lib/python3.13/site-packages/yaml/composer.py:110: in compose_sequence_node
+    while not self.check_event(SequenceEndEvent):
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/agent-workflow-dev-20261011/lib/python3.13/site-packages/yaml/parser.py:98: in check_event
+    self.current_event = self.state()
+                         ^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <yaml.loader.SafeLoader object at 0x1064fca50>, first = False
+
+    def parse_flow_sequence_entry(self, first=False):
+        if not self.check_token(FlowSequenceEndToken):
+            if not first:
+                if self.check_token(FlowEntryToken):
+                    self.get_token()
+                else:
+                    token = self.peek_token()
+>                   raise ParserError("while parsing a flow sequence", self.marks[-1],
+                            "expected ',' or ']', but got %r" % token.id, token.start_mark)
+E                   yaml.parser.ParserError: while parsing a flow sequence
+E                     in "<unicode string>", line 1, column 5:
+E                       id: [unterminated
+E                           ^
+E                   expected ',' or ']', but got '<stream end>'
+E                     in "<unicode string>", line 2, column 1:
+E                       
+E                       ^
+
+/private/tmp/agent-workflow-dev-20261011/lib/python3.13/site-packages/yaml/parser.py:483: ParserError
+_______ test_create_task_rejects_invalid_command_mapping_before_writing ________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-18/test_create_task_rejects_inval0')
+
+    def test_create_task_rejects_invalid_command_mapping_before_writing(tmp_path: Path) -> None:
+>       with pytest.raises(runner.FrontmatterError, match="declared"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE FrontmatterError
+
+loop/tests/test_reliability.py:382: Failed
+=========================== short test summary info ============================
+FAILED loop/tests/test_reliability.py::test_record_review_reports_invalid_utf8_without_traceback
+FAILED loop/tests/test_reliability.py::test_malformed_yaml_is_a_task_contract_error
+FAILED loop/tests/test_reliability.py::test_create_task_rejects_invalid_command_mapping_before_writing
+3 failed, 1 passed, 31 deselected in 0.37s

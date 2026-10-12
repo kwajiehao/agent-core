@@ -1,159 +1,124 @@
 ---
 name: agent-docs-loop
-description: Use when a user gives a repository directory or wants a coding agent to resume, create, intake, or run an agent-docs task through run_task.py, including repository discovery, coordination choice, task confirmation, execution, review, and verification.
+description: Implement or resume a coding task with Agent Core's task contracts, durable handoffs and verification runner. Use for agent-docs task files or an explicit loop request with a repository. Do not turn repository assessment, explanation or review-only requests into implementation.
 ---
 
 # Agent-Docs Loop
 
-Use this skill in these modes:
+Own the requested outcome. The runner prepares durable context and verifies
+declared behavior; the coordinator chooses the implementation and invokes any
+required independent reviewer. Preserve the user's existing authorization.
 
-- Repository directory only: discover and resume prior work or start intake.
-- No task doc yet: run intake, create the task doc, confirm it with the user,
-  then execute it.
-- Task doc already exists: prepare, edit, simplify, review, and verify that
-  task.
+## Resolve the request
 
-## Repository Mode
+Use the known Agent Core checkout as <agent-core> and the target repository as
+<target-repo>. Installed copies record the checkout path in
+references/installation.json; the Claude adapter records it as well. Otherwise
+use a known checkout or discover it from the skill symlink/repository; ask for the
+path only when it cannot be found. Run from any directory using:
 
-When the user provides a repository directory but no task path, treat that
-directory as sufficient input. From the Agent Core checkout, run:
+    uv --project <agent-core> run python <agent-core>/loop/run_task.py --repo-root <target-repo> --resume
 
-```bash
-uv run python loop/run_task.py --repo-root <target-repo> --resume
-```
+If uv is unavailable, use an existing Python environment with the dependencies
+declared in Agent Core's pyproject.toml. Do not silently switch to a Python that
+cannot import the runner. Provision a project environment within the authorized
+setup scope, or report the concrete environment failure.
 
-If Agent Core is not the current checkout but its path is known, run the same
-command with `uv --project <agent-core>` and the absolute runner path. Do not ask
-for a task path or repeat context already stored in the target repository.
+Explicit new work takes precedence over an unrelated unfinished task. Resume
+discovery recovers context; it does not authorize implementing an old task when
+the user asked for a different change. For a repository-only loop invocation,
+follow the returned action:
 
-Parse the JSON result and follow its `action`:
+- resume: read task, prompt, handoff and available verification. Continue in the
+  existing run after checking evidence freshness. Preserve incomplete evidence.
+- completed_context: recover the completed context. Handle a supplied new
+  request; otherwise report the recovered state and ask what to build.
+- intake_required: discover repository context and draft the requested task.
+- Surface warnings. Never follow paths from skipped records or call stale
+  verification current. Legacy runs remain context; create a new v2 run after
+  restoring and reviewing their task contract.
 
-- `resume`: surface any warnings, then read `task_path`, `prompt`, `handoff`,
-  and `verification` when it exists. Re-read all task `read_first` files and
-  continue Execution Mode in the returned `run_dir`. Do not call
-  `--prepare-run`; the existing run and its artifacts are the durable context.
-- `completed_context`: surface any warnings and read `task_path`, `handoff`, and
-  the passing `verification`. If the user supplied a new change, continue with
-  Intake Mode for it. If the repository directory was the entire request,
-  summarize the recovered completed state and ask what they want to build next.
-- `intake_required`: surface any warnings, then continue with Intake Mode.
+## Intake an authorized change
 
-Discovery prefers the newest valid run without passing verification across all
-tasks. Only when every valid run passed does it return the newest completed run
-as context. Never follow paths from a skipped record.
+Inspect repository instructions, relevant callers and tests, CI commands, local
+changes, reusable repo memory and verification helpers. Infer allowed paths and
+the coordination mode. Use solo for narrow work with clear evidence, review when
+independent judgment adds value, and delegated when a separate maker is useful.
+Describe the choice; do not ask the human to operate the workflow.
 
-## Intake Mode
+Create the task directly when the user supplied a clear, authorized change.
+Confirmation is required only for missing product meaning, a material expansion
+of scope or actions that need additional authority. A user's approval of a
+previous recommendation is sufficient. Continue independent work while a
+specific semantic question is pending.
 
-When the user asks to start work but has not provided an
-`agent-docs/tasks/<name>.md` file:
+For each acceptance condition, name an observable result and map it to a declared
+test or smoke command. Derive commands from repository evidence. If there is no
+credible verifier, build a small project-native helper inside the authorized
+paths and prove it detects the failure; read
+[verification-profiles.md](references/verification-profiles.md). Do not substitute
+a compile check for behavior or ask the user to discover facts the agent can find.
 
-1. Ask the user what they want changed and which coordination mode to use. If
-   the user is unsure, recommend:
-   - `solo` for narrow, low-risk changes.
-   - `review` for ambiguous, user-facing, shared, or risky changes.
-   - `delegated` when implementation should be done by a maker subagent before
-     independent review.
-2. Inspect the repo before drafting the task. Find likely context docs, allowed
-   paths, package/test commands, and existing smoke scripts.
-3. Propose a task summary to the user with:
-   - task id and title
-   - `read_first`
-   - `allowed_paths`
-   - `test_commands`
-   - optional `smoke_command`
-   - `coordination.mode`
-   - required maker/reviewer characterizations
-4. Ask for explicit confirmation before creating the task doc.
-5. Create the task with:
-   ```bash
-   uv --project <agent-core> run python <agent-core>/loop/run_task.py --repo-root <target-repo> \
-     --new-task <id> \
-     --title <title> \
-     --allowed-path <glob> \
-     --test-command <command> \
-     --coordination-mode <solo|review|delegated> \
-     [--read-first <path>] \
-     [--maker-characterization <text>] \
-     [--reviewer-characterization <text>] \
-     [--smoke-command <command>]
-   ```
-6. Open the generated task doc, replace placeholder Task and Acceptance text
-   with the confirmed request, then show the task path to the user.
-7. Reset context if the client supports it. If not, simulate a reset: ignore
-   intake discussion, read only the generated task doc, generated `prompt.md`,
-   and `read_first` files before editing.
-8. Execute the task using Execution Mode.
+Create a task using the runner's --new-task, --title, --allowed-path,
+--test-command and --coordination-mode options. Pair each --acceptance-condition
+with --acceptance-command. Supply task-specific --maker-characterization and/or
+--reviewer-characterization when their mode requires them. Add --read-first and
+--smoke-command only when relevant.
 
-Run the command from any working directory. `--project <agent-core>` ensures
-the runner uses Agent Core's dependencies. If the current checkout is Agent
-Core, use it directly. Only ask for the Agent Core path when it is neither the
-current checkout nor known from the skill installation.
+Read the generated task, replace Task/Acceptance placeholders, and retain the
+user's constraints and important decisions there. Re-read that frozen contract
+before implementation; a simulated context reset must not discard user steering.
+When the contract changes, preserve the old run and prepare a new one.
 
-## Verification Command Policy
+## Execute and prove
 
-The runner does not infer verification commands or smoke tests. It only executes
-the `test_commands` and optional `smoke_command` declared in the task. During
-intake, propose commands from repo evidence such as README instructions,
-`pyproject.toml`, package scripts, existing test files, CI config, or smoke
-scripts. Do not invent a smoke command unless the task will create that script
-inside `allowed_paths`. If no credible command is discoverable, ask the user.
+1. Prepare with the task path and --prepare-run. Read prompt.md, the task,
+   read_first files and the consuming repository's instructions. Read Agent
+   Core's CODING.md and TESTING.md for implementation/testing choices.
+2. Select the relevant evidence procedure from
+   [playbooks.md](references/playbooks.md). Work in small verifiable units.
+   Use a failing reproducer or regression before a fix where practical.
+3. Implement directly or invoke the required maker. Give delegates file pointers,
+   bounded ownership, the task contract and success criteria. Keep shared writes
+   under one owner. Inspect their actual diffs and evidence.
+4. Simplify after implementation. Remove speculative abstractions, dead code and
+   symptom-only patches. Use an existing simplifier when useful and available;
+   a direct coordinator pass is sufficient. No particular CLI/model is required.
+5. For review/delegated mode, invoke an independent reviewer of the current full
+   task delta, tests, behavior evidence and risks. Store findings in
+   subagents/reviewer.md with an exact Verdict: approve line only when satisfied.
+   Seal that review using the task path, --record-review and --run-dir. The seal
+   binds the artifact to the code and task; it does not prove independence.
+6. Run the task path with --verify-only --run-dir <run-dir>. The runner owns final
+   execution of declared tests and optional smoke. Earlier focused development
+   checks are useful; avoid an unconditional duplicate full-suite run.
+   Plan incidental verifier writes such as bytecode/build caches into owned or
+   approved output locations; see [verification profiles](references/verification-profiles.md).
+7. Inspect verification.json and the command/artifact results. A pass covers only
+   the mapped acceptance conditions. Do not declare completion if the requested
+   outcome has an uncovered condition, stale evidence or an unresolved required
+   decision. Fix the cause and re-review after changes invalidate the seal.
 
-`test_commands` must contain at least one command. `smoke_command` is optional
-and should be included only when it gives meaningful integration or user-facing
-coverage beyond the tests.
+Keep handoff.md current with completed/pending work, hypotheses, commands and
+owned resources. Before resuming a service, inspect its actual live handle rather
+than treating a stale PID or status file as proof it runs. Never overlap drivers
+of a shared instance. A command timeout is incomplete execution, not a product
+diagnosis.
 
-## Execution Mode
+For autonomous work, state a checkable exit condition and scope/budget, checkpoint
+each meaningful iteration, and change hypotheses when evidence refutes them.
+Do not weaken the exit condition to make a run pass. External writes and
+operational expansion retain their normal authorization requirements.
 
-Use this when the user asks to implement an `agent-docs/tasks/<name>.md` task.
+## Learn and hand off
 
-1. Prepare a run:
-   ```bash
-   uv --project <agent-core> run python <agent-core>/loop/run_task.py agent-docs/tasks/<name>.md --repo-root <target-repo> --prepare-run
-   ```
-2. Read the generated `prompt.md`, the task doc, every `read_first` file,
-   `CODING.md`, and `TESTING.md`.
-3. Follow the generated `coordination.mode`:
-   - `solo`: the coordinator may implement directly.
-   - `review`: the coordinator may implement directly; reviewer approval is
-     required after the simplify pass.
-   - `delegated`: the coordinator must invoke a maker; reviewer approval is
-     required after the simplify pass.
-4. Run the simplify pass after implementation and before required review:
-   - In Claude Code: `/simplify`
-   - Outside Claude Code:
-     ```bash
-     claude --model opus-4.8 -p "/simplify" --output-format stream-json --include-partial-messages
-     ```
-   If the simplify pass changes files, include those changes in the review and
-   final verification.
-5. Run the task's `test_commands` and optional `smoke_command`.
-6. Verify with the runner:
-   ```bash
-   uv --project <agent-core> run python <agent-core>/loop/run_task.py agent-docs/tasks/<name>.md --repo-root <target-repo> --verify-only --run-dir <run-dir>
-   ```
+Record consequential failures and human corrections even when a run fails.
+Persist reusable lessons after their validity is established: prefer a type,
+lint, test, canonical helper or runtime check; use brief repo memory only when
+judgment cannot be encoded structurally. Add the regression to the behavior
+evaluation suite before promoting a broad skill change. Do not edit installed
+global skills or create external issues by inference.
 
-Do not treat agent summaries as verification. Use the runner artifacts as the
-source of truth.
-
-Role mapping in the simplified loop:
-
-- Coordinator: the main agent that owns the run, invokes required subagents,
-  integrates findings, and runs final verification.
-- Maker: implements a bounded patch inside assigned paths. The coordinator may
-  act as maker for `solo` and `review`; `delegated` requires a maker subagent.
-- Reviewer: independently reviews the diff, tests, and artifacts, then records
-  findings and an exact `Verdict: approve` line when satisfied.
-- Verifier: the runner gates.
-- Reflector: optional post-pass memory/skill update after runner verification
-  passes.
-
-Invoke subagents when required by `coordination.mode`, when the task requests
-review/research, when repo instructions call for a specialized skill, when work
-can split cleanly, when the main path is stuck, or when risk justifies
-independent review. Subagents and repo-local skills do not change the task's
-`allowed_paths` or acceptance commands.
-
-Keep resume notes in the run's `handoff.md`. Keep subagent briefs and findings
-in the run's `subagents/` directory, then summarize accepted findings back into
-`handoff.md`. After a passed run, reflect only reusable lessons into repo memory
-or a repo-local skill.
+Report the observable result, task/run paths, actual verification scope, red-green
+evidence when applicable, and remaining gaps. Reviewer summaries are judgment;
+runner records and actual artifacts are the evidence.

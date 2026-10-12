@@ -8,6 +8,10 @@ allowed_paths:
   - <test dir>/**
 test_commands:
   - <command that verifies this task>
+acceptance:
+  - condition: <observable user or caller result>
+    command: <one of the declared test or smoke commands>
+#   evidence: <optional retained file produced by the command>
 # coordination:
 #   mode: solo | review | delegated
 #   maker:

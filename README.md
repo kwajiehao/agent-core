@@ -1,271 +1,149 @@
 # Agent Core
 
-A small repo-agnostic task runner for agentic coding.
-
-It has one job: turn a task doc into a run directory, then verify that the
-result stayed in scope and passed the commands declared by the task.
-
-## Quick Start
-
-From this checkout, install the agent-facing skill once:
-
-```bash
-python scripts/install_skills.py --force
-```
-
-Then start a fresh agent conversation and provide the target repository:
-
-```text
-Use agent-docs-loop for /path/to/target-repo.
-```
-
-Agent Core will resume unfinished work, recover the latest completed context,
-or guide you through creating a new task. To start new work immediately, append
-`Create a new task for: <request>.` See [How To Use](#how-to-use) for details.
-
-## Roles
-
-Agent Core separates agent orchestration from deterministic verification.
-
-- Operator: the human who starts an agent turn, confirms task setup, and
-  provides missing context when needed.
-- Coordinator: the main coding agent session invoked by the operator. It owns
-  the run, reads the task contract, implements directly or invokes required
-  subagents, integrates findings, runs commands, and fixes failures.
-- Maker: the implementation responsibility. In `solo` and `review` mode, the
-  coordinator may act as maker; in `delegated` mode, this must be a subagent
-  with findings recorded in `subagents/maker.md`.
-- Reviewer: the independent quality and risk reviewer. It reviews the diff,
-  tests, and artifacts, then records findings and `Verdict: approve` when
-  satisfied. It is not the acceptance source.
-- Runner: the `loop/run_task.py` harness. It prepares run artifacts and
-  performs deterministic verification of allowed paths, required coordination
-  artifacts, declared tests, and optional smoke commands. It does not launch
-  agents, choose fixes, or accept self-reported results.
-- Reflector: an optional post-pass responsibility that stores reusable lessons
-  in repo memory or skills after runner verification passes.
-
-## Flow
-
-```text
-task.md -> prompt.md -> coordinator/maker/reviewer work
-  -> runner verifies artifacts + diff + tests + optional smoke
-```
-
-The runner does not manage agents, start services, infer smoke scripts, or
-accept self-reported results. Repo-specific setup belongs in the task's own
-commands. The runner can require coordination artifacts, but the coordinator
-invokes and manages any subagents.
-
-## Task Schema
-
-Task files are markdown files with YAML frontmatter:
-
-```yaml
----
-id: PR-12
-title: Fix search pagination
-read_first:
-  - README.md
-allowed_paths:
-  - src/search/**
-  - tests/search/**
-test_commands:
-  - pytest tests/search/test_pagination.py
-coordination:
-  mode: review
-  reviewer:
-    characterization: >
-      Principal search-platform reviewer focused on pagination correctness and
-      regression coverage.
-smoke_command: ./scripts/smoke-search.sh   # optional
----
-```
-
-Required fields:
-
-- `id`
-- `title`
-- `allowed_paths`
-- `test_commands`
-
-Optional fields:
-
-- `read_first`
-- `coordination`
-- `smoke_command`
-
-`test_commands` must contain at least one command for verification to pass.
-
-`coordination.mode` defaults to `solo` and can be:
-
-- `solo`: the coordinator may implement directly. No subagent artifact is
-  required.
-- `review`: the coordinator may implement directly, but final verification
-  requires `subagents/reviewer.md` with `Verdict: approve`.
-- `delegated`: final verification requires `subagents/maker.md` and
-  `subagents/reviewer.md` with `Verdict: approve`.
-
-When `mode` is `review`, set `coordination.reviewer.characterization`. When
-`mode` is `delegated`, set both `coordination.maker.characterization` and
-`coordination.reviewer.characterization`. These characterizations are
-task-specific role frames for subagent invocation, for example the relevant
-domain, system type, scale, language, or review specialty.
-
-## How To Use
-
-The intended human interface is the repo-local skill:
-
-```text
-Use agent-docs-loop for /path/to/target-repo.
-```
-
-Install the skill once from this repo:
-
-```bash
-python /path/to/agent-core/scripts/install_skills.py
-```
-
-This installs `skills/agent-docs-loop` into
-`${CODEX_HOME:-~/.codex}/skills/agent-docs-loop` for Codex. It also installs a
-Claude copy at `${CLAUDE_HOME:-~/.claude}/skills/agent-docs-loop` and a Claude
-slash-command adapter at `${CLAUDE_HOME:-~/.claude}/commands/agent-docs-loop.md`.
-Use `--force` to replace existing installs, `--codex-dest <dir>` to change the
-Codex destination, or `--claude-dir <dir>` to change the Claude destination.
-
-After installation, start a new agent turn from the Agent Core checkout and
-provide only the target repository directory. The skill first discovers the
-repository's run state:
-
-- An unfinished or failed run is resumed from its existing task, prompt,
-  handoff, and verification artifacts.
-- If every run passed, the newest completed run is loaded as prior context
-  before the agent handles a new request.
-- If no valid run exists, the agent starts task intake and asks what to build.
-
-Malformed, missing, inconsistent, or repository-escaping artifacts are skipped
-and reported as warnings instead of being trusted.
-
-You should not need to run the CLI yourself for normal use. The CLI exists so
-agents and scripts have a deterministic way to create task docs, prepare runs,
-and verify outcomes.
-
-To resume or recover context, the repository directory is the entire request:
-
-```text
-Use agent-docs-loop for /Users/me/code/my-repo.
-```
-
-For a brand-new repository, you can include the requested change in that first
-message or answer the skill's intake question. The installed skill handles
-discovery, intake, confirmation, task generation, and execution using the
-workflow in `WORKFLOW.md`.
-
-### Verification Commands
-
-Verification commands and smoke tests are not generated automatically by the
-runner. The task must declare at least one `test_commands` entry, and the runner
-executes exactly those commands. `smoke_command` is optional and runs only when
-declared.
-
-When you use the skill, the coding agent should infer and propose verification
-commands from repo evidence such as README instructions, package scripts,
-existing tests, CI config, or smoke scripts. If it cannot find a credible
-command, it should ask you rather than inventing one.
-
-## CLI Usage
-
-Run from the consuming repo root, or pass `--repo-root`.
-
-Discover the run to resume from any working directory:
-
-```bash
-uv --project /path/to/agent-core run python /path/to/agent-core/loop/run_task.py \
-  --repo-root /path/to/target-repo --resume
-```
-
-The command emits JSON. `action` is `resume` for the newest run without passing
-verification, `completed_context` for the newest run when all valid runs passed,
-or `intake_required` when no valid run exists. The result includes resolved task,
-run, prompt, handoff, and verification paths plus verification status and any
-warnings. Resume discovery never creates a new run.
-
-Generate a task:
-
-```bash
-uv --project /path/to/agent-core run python /path/to/agent-core/loop/run_task.py \
-  --new-task PR-12 \
-  --title "Fix search pagination" \
-  --allowed-path 'src/search/**' \
-  --allowed-path 'tests/search/**' \
-  --test-command 'pytest tests/search/test_pagination.py' \
-  --coordination-mode review \
-  --reviewer-characterization 'Principal search-platform reviewer focused on pagination correctness.'
-```
-
-This creates:
-
-```text
-agent-docs/tasks/PR-12-fix-search-pagination.md
-agent-docs/MEMORY.md
-agent-docs/skills/README.md
-```
-
-Prepare a run for an agent:
-
-```bash
-uv --project /path/to/agent-core run python /path/to/agent-core/loop/run_task.py \
-  agent-docs/tasks/<name>.md --prepare-run
-```
-
-This writes:
-
-```text
-agent-docs/runs/<task-id>/<run-id>/prompt.md
-agent-docs/runs/<task-id>/<run-id>/run.json
-agent-docs/runs/<task-id>/<run-id>/handoff.md
-agent-docs/runs/<task-id>/<run-id>/subagents/README.md
-```
-
-After the agent edits the repo:
-
-```bash
-uv --project /path/to/agent-core run python /path/to/agent-core/loop/run_task.py \
-  agent-docs/tasks/<name>.md \
-  --verify-only --run-dir agent-docs/runs/<task-id>/<run-id>
-```
-
-Verification writes:
-
-```text
-coordination.json
-tests.json
-smoke.json
-verification.json
-```
-
-Each run also has a `handoff.md` file for durable notes while work is in
-progress.
-
-The CLI exits `0` for resume discovery and when verification status is `passed`,
-`1` when verification gates fail, and `2` when the task/frontmatter is invalid.
-
-## What Is Enforced
-
-- Changed files, excluding pre-existing dirty files captured at prepare time,
-  must match `allowed_paths`.
-- `coordination.mode` must have its required subagent artifacts, when configured.
-- Every `test_commands` command must pass.
-- `smoke_command`, when present, must pass.
-
-Everything else is normal agent judgment. Agent execution details live in
-`WORKFLOW.md`.
-
-## Agent Docs
-
-- [WORKFLOW.md](/Users/kwa/Documents/personal/agent-core/WORKFLOW.md) describes
-  the task execution loop.
-- [CODING.md](/Users/kwa/Documents/personal/agent-core/CODING.md) describes
-  implementation principles.
-- [TESTING.md](/Users/kwa/Documents/personal/agent-core/TESTING.md) describes
-  regression and smoke-test conventions.
+A repository-independent task runner for coding agents. It prepares durable
+context and verifies declared behavior, scope, evidence freshness and command
+outcomes. The coordinator chooses designs, invokes agents and owns completion.
+
+## Use
+
+Install the agent-facing skill from this checkout:
+
+    python scripts/install_skills.py
+
+The default Codex discovery location is ~/.agents/skills. An explicit CODEX_HOME
+or --codex-dest overrides it. Claude receives a skill copy and a slash-command
+adapter naming this checkout. Existing entries are preserved unless --force is
+requested; replacing a symlink never deletes its target.
+
+Ask your coding agent:
+
+    Use agent-docs-loop for /path/to/repository. Fix <specific behavior>.
+
+A clear authorized request starts discovery and task creation without a routine
+confirmation gate. A repository-only invocation recovers prior context. Explicit
+new work takes precedence over unrelated unfinished tasks. Assessment and
+explanation requests stay read-only.
+
+Read [WORKFLOW.md](WORKFLOW.md) for execution and
+[the skill](skills/agent-docs-loop/SKILL.md) for the detailed agent procedure.
+[CODING.md](CODING.md) and [TESTING.md](TESTING.md) hold cross-repository conventions.
+
+## Environment
+
+Command execution is supported on POSIX (macOS/Linux). Use uv from this checkout,
+or an existing Python 3.11+ environment containing the
+dependencies in pyproject.toml. Tests additionally require the dev dependencies.
+
+    uv run pytest
+    # Equivalent in a provisioned environment:
+    python -m pytest
+
+From another directory:
+
+    uv --project /path/to/agent-core run python /path/to/agent-core/loop/run_task.py --repo-root /path/to/repository --resume
+
+The runner does not provision services, infer verification commands or launch
+agents. Repository setup belongs in project-owned commands.
+
+## Task contract
+
+A task is Markdown with YAML frontmatter:
+
+    ---
+    id: search-pagination
+    title: Preserve next-page results
+    read_first:
+      - README.md
+    allowed_paths:
+      - src/search/**
+      - tests/search/**
+    test_commands:
+      - python -m pytest tests/search/test_pagination.py
+    acceptance:
+      - condition: A second page returns the remaining items without duplicates.
+        command: python -m pytest tests/search/test_pagination.py
+    coordination:
+      mode: review
+      reviewer:
+        characterization: Search reviewer focused on pagination and regression evidence.
+    ---
+
+Required fields are id, title, allowed_paths, nonempty test_commands and
+acceptance mappings for v2 execution. Each acceptance command must be one of the
+declared test commands or the optional smoke_command. A mapping may additionally
+name an evidence file produced by its command; verification retains its identity.
+Conditions describe observable behavior. Mapping an unrelated green command does
+not establish that behavior; task author/reviewer judgment remains necessary.
+
+coordination defaults to solo. review requires reviewer characterization and an
+approved, sealed subagents/reviewer.md. delegated additionally requires maker
+characterization and subagents/maker.md. Sealing records freshness, not proof of
+independent agent execution.
+
+## CLI
+
+Relative task and run paths resolve against `--repo-root`, not the caller's
+working directory. Absolute paths remain supported.
+
+Create a task, then replace its Task and Acceptance placeholders before preparation:
+
+    python loop/run_task.py --repo-root /path/to/repository --new-task search-pagination --title 'Preserve next-page results' --allowed-path 'src/search/**' --allowed-path 'tests/search/**' --test-command 'python -m pytest tests/search/test_pagination.py' --acceptance-condition 'Next page returns remaining items without duplicates.' --acceptance-command 'python -m pytest tests/search/test_pagination.py' --coordination-mode review --reviewer-characterization 'Independent search-platform reviewer'
+
+Prepare a run:
+
+    python loop/run_task.py agent-docs/tasks/search-pagination-preserve-next-page-results.md --repo-root /path/to/repository --prepare-run
+
+After implementation and independent review, seal the reviewer artifact:
+
+    python loop/run_task.py <task> --repo-root <repo> --record-review --run-dir <run>
+
+Finally verify:
+
+    python loop/run_task.py <task> --repo-root <repo> --verify-only --run-dir <run>
+
+Resume discovery:
+
+    python loop/run_task.py --repo-root <repo> --resume
+
+The verification command executes all declared tests and optional smoke and writes
+structured outcomes. Command deadlines terminate owned descendants; retained
+output is bounded to 64 KiB per stdout/stderr and truncation is reported.
+Evidence paths should live under
+the run's own directory or a documented ignored output location so generation
+does not change the source snapshot.
+
+## Evidence and limitations
+
+Prepared v2 runs bind a task snapshot, initial HEAD and repository file states.
+Scope verification covers tracked and nonignored untracked files, including
+commits, additions/deletions, changes to initially dirty files and edits made by
+test/smoke commands. Ignored untracked outputs are not source-scope evidence.
+Git inspection failure is a
+failed verification condition. The check is a post-action scope gate, not a sandbox.
+
+Review and passing verification describe their exact task, code and artifacts.
+Subsequent changes invalidate affected evidence. Missing, malformed, stale or
+interrupted records cannot establish completion. Resume validates recorded
+structure and freshness; historical passes are not current proof.
+
+Legacy runs are retained as context and reported with warnings. They lack a
+trustworthy v2 content baseline; explicitly restore/review their task contract and
+prepare a new run before v2 verification. A new baseline proves its own subsequent
+delta, not work that occurred before it.
+A new prepared run supersedes older attempts for the same task in discovery;
+their artifacts remain intact. Other unfinished tasks retain their precedence.
+
+The runner proves mapped declared checks, not exhaustive product correctness or
+reviewer independence. The coordinator must ensure acceptance covers the user's
+full request and that the commands observe the intended behavior.
+
+## Durable context
+
+Tasks, repo memory and local skill indexes live under agent-docs. Each run has
+prompt.md, task.snapshot.md, run.json, handoff.md and subagents/, plus review and
+verification artifacts as work advances. Generated runs are ignored by Git;
+task contracts and reusable knowledge can be versioned.
+
+Capture important failed attempts and corrections, then encode validated lessons
+as tests, types, lint or helpers wherever practical. For behavioral workflow
+evaluations, see the sibling agent-skills repository's evals tooling.

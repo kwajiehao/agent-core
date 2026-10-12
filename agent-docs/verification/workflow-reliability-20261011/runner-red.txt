@@ -1,0 +1,396 @@
+F.FFFFFFFFFFFFFFFFFFFF                                                   [100%]
+=================================== FAILURES ===================================
+________________ test_dirty_file_additional_edit_is_not_exempt _________________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_dirty_file_additional_edi0')
+
+    def test_dirty_file_additional_edit_is_not_exempt(tmp_path: Path) -> None:
+        task = make_task(tmp_path)
+        (tmp_path / "notes.txt").write_text("human pending change\n", encoding="utf-8")
+        run = runner.prepare_run(task, tmp_path)
+        (tmp_path / "notes.txt").write_text("agent overwrote human change\n", encoding="utf-8")
+        result = runner.verify_task(task, tmp_path, run.run_dir)
+>       assert result.status == "failed"
+E       AssertionError: assert 'passed' == 'failed'
+E         
+E         - failed
+E         + passed
+
+loop/tests/test_reliability.py:60: AssertionError
+____________________ test_committed_forbidden_edit_is_seen _____________________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_committed_forbidden_edit_0')
+
+    def test_committed_forbidden_edit_is_seen(tmp_path: Path) -> None:
+        task = make_task(tmp_path)
+        run = runner.prepare_run(task, tmp_path)
+        (tmp_path / "notes.txt").write_text("forbidden committed edit\n", encoding="utf-8")
+        git(tmp_path, "add", "notes.txt")
+        git(tmp_path, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-qm", "agent change")
+        result = runner.verify_task(task, tmp_path, run.run_dir)
+>       assert result.status == "failed"
+E       AssertionError: assert 'passed' == 'failed'
+E         
+E         - failed
+E         + passed
+
+loop/tests/test_reliability.py:80: AssertionError
+____________ test_test_command_mutation_is_checked_after_execution _____________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_test_command_mutation_is_0')
+
+    def test_test_command_mutation_is_checked_after_execution(tmp_path: Path) -> None:
+        task = make_task(tmp_path, command="printf changed > notes.txt")
+        run = runner.prepare_run(task, tmp_path)
+        result = runner.verify_task(task, tmp_path, run.run_dir)
+>       assert result.status == "failed"
+E       AssertionError: assert 'passed' == 'failed'
+E         
+E         - failed
+E         + passed
+
+loop/tests/test_reliability.py:88: AssertionError
+__________________ test_only_current_run_artifacts_are_exempt __________________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_only_current_run_artifact0')
+
+    def test_only_current_run_artifacts_are_exempt(tmp_path: Path) -> None:
+        task = make_task(tmp_path)
+        run = runner.prepare_run(task, tmp_path)
+        foreign = tmp_path / "agent-docs" / "runs" / "OTHER" / "other-run" / "handoff.md"
+        foreign.parent.mkdir(parents=True)
+        foreign.write_text("unrelated task modified", encoding="utf-8")
+        result = runner.verify_task(task, tmp_path, run.run_dir)
+>       assert result.status == "failed"
+E       AssertionError: assert 'passed' == 'failed'
+E         
+E         - failed
+E         + passed
+
+loop/tests/test_reliability.py:99: AssertionError
+____________________ test_prepare_fails_closed_outside_git _____________________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_prepare_fails_closed_outs0')
+
+    def test_prepare_fails_closed_outside_git(tmp_path: Path) -> None:
+>       with pytest.raises(runner.RunnerError, match="[Gg]it"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE RunnerError
+
+loop/tests/test_reliability.py:104: Failed
+_________________ test_prepare_requires_actual_repository_root _________________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_prepare_requires_actual_r0')
+
+    def test_prepare_requires_actual_repository_root(tmp_path: Path) -> None:
+        make_task(tmp_path)
+>       with pytest.raises(runner.RunnerError, match="root"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE RunnerError
+
+loop/tests/test_reliability.py:110: Failed
+_________ test_changed_task_contract_cannot_silently_replace_snapshot __________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_changed_task_contract_can0')
+
+    def test_changed_task_contract_cannot_silently_replace_snapshot(tmp_path: Path) -> None:
+        task = make_task(tmp_path, command="false")
+        run = runner.prepare_run(task, tmp_path)
+        task.path.write_text(task.path.read_text().replace("false", "true"), encoding="utf-8")
+        altered = runner.load_task(task.path, tmp_path)
+>       with pytest.raises(runner.RunnerError, match="task.*changed|snapshot"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE RunnerError
+
+loop/tests/test_reliability.py:119: Failed
+______________ test_prepared_task_snapshot_preserves_exact_bytes _______________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_prepared_task_snapshot_pr0')
+
+    def test_prepared_task_snapshot_preserves_exact_bytes(tmp_path: Path) -> None:
+        task = make_task(tmp_path)
+        run = runner.prepare_run(task, tmp_path)
+>       assert (run.run_dir / "task.snapshot.md").read_bytes() == task.path.read_bytes()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+loop/tests/test_reliability.py:126: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/opt/homebrew/Cellar/python@3.13/3.13.5/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_abc.py:625: in read_bytes
+    with self.open(mode='rb') as f:
+         ^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_prepared_task_snapshot_pr0/agent-docs/runs/CHECK/20261011T123512Z-c10f78fa/task.snapshot.md')
+mode = 'rb', buffering = -1, encoding = None, errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed to by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+>       return io.open(self, mode, buffering, encoding, errors, newline)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: '/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_prepared_task_snapshot_pr0/agent-docs/runs/CHECK/20261011T123512Z-c10f78fa/task.snapshot.md'
+
+/opt/homebrew/Cellar/python@3.13/3.13.5/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:537: FileNotFoundError
+____________________ test_verify_requires_prepared_baseline ____________________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_verify_requires_prepared_0')
+
+    def test_verify_requires_prepared_baseline(tmp_path: Path) -> None:
+        task = make_task(tmp_path)
+>       with pytest.raises(runner.RunnerError, match="prepare|baseline"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE RunnerError
+
+loop/tests/test_reliability.py:132: Failed
+_______________ test_review_text_requires_recorded_patch_binding _______________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_review_text_requires_reco0')
+
+    def test_review_text_requires_recorded_patch_binding(tmp_path: Path) -> None:
+        task = make_task(tmp_path, review=True)
+        run = runner.prepare_run(task, tmp_path)
+        (run.run_dir / "subagents" / "reviewer.md").write_text("Verdict: approve\n", encoding="utf-8")
+        result = runner.verify_task(task, tmp_path, run.run_dir)
+>       assert result.status == "failed"
+E       AssertionError: assert 'passed' == 'failed'
+E         
+E         - failed
+E         + passed
+
+loop/tests/test_reliability.py:141: AssertionError
+________________ test_record_review_is_valid_until_code_changes ________________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_record_review_is_valid_un0')
+
+    def test_record_review_is_valid_until_code_changes(tmp_path: Path) -> None:
+        task = make_task(tmp_path, review=True)
+        run = runner.prepare_run(task, tmp_path)
+        (run.run_dir / "subagents" / "reviewer.md").write_text("Checked behavior.\nVerdict: approve\n", encoding="utf-8")
+>       runner.record_review(task, tmp_path, run.run_dir)
+        ^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'loop.runner' has no attribute 'record_review'
+
+loop/tests/test_reliability.py:149: AttributeError
+______________ test_reviewer_artifact_change_invalidates_binding _______________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_reviewer_artifact_change_0')
+
+    def test_reviewer_artifact_change_invalidates_binding(tmp_path: Path) -> None:
+        task = make_task(tmp_path, review=True)
+        run = runner.prepare_run(task, tmp_path)
+        reviewer = run.run_dir / "subagents" / "reviewer.md"
+        reviewer.write_text("Verdict: approve\n", encoding="utf-8")
+>       runner.record_review(task, tmp_path, run.run_dir)
+        ^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'loop.runner' has no attribute 'record_review'
+
+loop/tests/test_reliability.py:162: AttributeError
+_________________ test_resume_rejects_status_only_verification _________________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_resume_rejects_status_onl0')
+
+    def test_resume_rejects_status_only_verification(tmp_path: Path) -> None:
+        task = make_task(tmp_path)
+        run = runner.prepare_run(task, tmp_path)
+        (run.run_dir / "verification.json").write_text('{"status":"passed"}', encoding="utf-8")
+        result = runner.discover_resume(tmp_path)
+>       assert result.action == "resume"
+E       AssertionError: assert 'completed_context' == 'resume'
+E         
+E         - resume
+E         + completed_context
+
+loop/tests/test_reliability.py:172: AssertionError
+__________________ test_resume_rejects_pass_for_changed_code ___________________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_resume_rejects_pass_for_c0')
+
+    def test_resume_rejects_pass_for_changed_code(tmp_path: Path) -> None:
+        task = make_task(tmp_path)
+        run = runner.prepare_run(task, tmp_path)
+        assert runner.verify_task(task, tmp_path, run.run_dir).status == "passed"
+        (tmp_path / "src" / "main.py").write_text("value = 2\n", encoding="utf-8")
+        result = runner.discover_resume(tmp_path)
+>       assert result.action == "resume"
+E       AssertionError: assert 'completed_context' == 'resume'
+E         
+E         - resume
+E         + completed_context
+
+loop/tests/test_reliability.py:183: AssertionError
+________________ test_resume_rejects_pass_for_changed_task_body ________________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_resume_rejects_pass_for_c1')
+
+    def test_resume_rejects_pass_for_changed_task_body(tmp_path: Path) -> None:
+        task = make_task(tmp_path)
+        run = runner.prepare_run(task, tmp_path)
+        assert runner.verify_task(task, tmp_path, run.run_dir).status == "passed"
+        task.path.write_text(task.path.read_text() + "New requirement\n", encoding="utf-8")
+>       assert runner.discover_resume(tmp_path).verification_status == "invalid"
+E       AssertionError: assert 'passed' == 'invalid'
+E         
+E         - invalid
+E         + passed
+
+loop/tests/test_reliability.py:192: AssertionError
+______________ test_acceptance_maps_conditions_to_command_results ______________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_acceptance_maps_condition0')
+
+    def test_acceptance_maps_conditions_to_command_results(tmp_path: Path) -> None:
+        task = make_task(tmp_path)
+        run = runner.prepare_run(task, tmp_path)
+        result = runner.verify_task(task, tmp_path, run.run_dir)
+>       acceptance = gate(result, "acceptance")
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+loop/tests/test_reliability.py:199: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = VerificationResult(status='passed', gates=[GateResult(name='diff_scope', passed=True, details={'changed_files': [], 'v...ytest-1/test_acceptance_maps_condition0', exit_code=0, stdout='', stderr='', duration_seconds=0.004, timed_out=False)])
+name = 'acceptance'
+
+    def gate(result: runner.VerificationResult, name: str) -> runner.GateResult:
+>       return next(item for item in result.gates if item.name == name)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       StopIteration
+
+loop/tests/test_reliability.py:51: StopIteration
+________________ test_missing_acceptance_mapping_fails_prepare _________________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_missing_acceptance_mappin0')
+
+    def test_missing_acceptance_mapping_fails_prepare(tmp_path: Path) -> None:
+        task = make_task(tmp_path)
+        import yaml
+    
+        frontmatter, body = runner._read_frontmatter(task.path)
+        frontmatter.pop("acceptance")
+        task.path.write_text("---\n" + yaml.safe_dump(frontmatter) + "---\n" + body, encoding="utf-8")
+>       with pytest.raises(runner.FrontmatterError, match="acceptance"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE FrontmatterError
+
+loop/tests/test_reliability.py:213: Failed
+_____________ test_acceptance_cannot_reference_undeclared_command ______________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_acceptance_cannot_referen0')
+
+    def test_acceptance_cannot_reference_undeclared_command(tmp_path: Path) -> None:
+        task = make_task(tmp_path)
+        task.path.write_text(task.path.read_text().replace("command: 'true'", "command: pytest nonexistent.py"), encoding="utf-8")
+>       with pytest.raises(runner.FrontmatterError, match="declared|acceptance"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE FrontmatterError
+
+loop/tests/test_reliability.py:220: Failed
+_____________ test_timeout_kills_descendant_that_would_write_later _____________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_timeout_kills_descendant_0')
+
+    @pytest.mark.skipif(os.name != "posix", reason="Process group behavior uses POSIX")
+    def test_timeout_kills_descendant_that_would_write_later(tmp_path: Path) -> None:
+        proof = tmp_path / "child-survived.txt"
+        child = f"import time; time.sleep(0.5); open({str(proof)!r}, 'w').write('survived')"
+        command = f"{shlex.quote(sys.executable)} -c {shlex.quote(child)}; true"
+        result = runner.run_command(command, tmp_path, timeout_seconds=0.1)
+        time.sleep(0.6)
+        assert result.timed_out
+>       assert not proof.exists()
+E       AssertionError: assert not True
+E        +  where True = exists()
+E        +    where exists = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_timeout_kills_descendant_0/child-survived.txt').exists
+
+loop/tests/test_reliability.py:232: AssertionError
+___________ test_output_retention_is_bounded_and_reports_truncation ____________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_output_retention_is_bound0')
+
+    def test_output_retention_is_bounded_and_reports_truncation(tmp_path: Path) -> None:
+        code = "import sys; sys.stdout.write('a'*2000000); sys.stderr.write('b'*2000000)"
+        command = f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}"
+        result = runner.run_command(command, tmp_path, timeout_seconds=10)
+        assert result.exit_code == 0
+>       assert len(result.stdout.encode()) <= 65536
+E       assert 2000000 <= 65536
+E        +  where 2000000 = len(b'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+E        +    where b'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' = <built-in method encode of str object at 0x1588e0000>()
+E        +      where <built-in method encode of str object at 0x1588e0000> = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'.encode
+E        +        where 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' = CommandResult(command='/private/tmp/agent-workflow-dev-20261011/bin/python -c \'import sys; sys.stdout.write(\'"\'"\'a...bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', duration_seconds=0.043, timed_out=False).stdout
+
+loop/tests/test_reliability.py:240: AssertionError
+_______________________ test_review_cli_records_binding ________________________
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-1/test_review_cli_records_bindin0')
+capsys = <_pytest.capture.CaptureFixture object at 0x105b2ea50>
+
+    def test_review_cli_records_binding(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        task = make_task(tmp_path, review=True)
+        run = runner.prepare_run(task, tmp_path)
+        (run.run_dir / "subagents" / "reviewer.md").write_text("Verdict: approve\n", encoding="utf-8")
+>       assert runner.main([str(task.path), "--repo-root", str(tmp_path), "--record-review", "--run-dir", str(run.run_dir)]) == 0
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+loop/tests/test_reliability.py:249: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+loop/runner.py:437: in main
+    args = parser.parse_args(argv)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.13/3.13.5/Frameworks/Python.framework/Versions/3.13/lib/python3.13/argparse.py:1902: in parse_args
+    self.error(msg)
+/opt/homebrew/Cellar/python@3.13/3.13.5/Frameworks/Python.framework/Versions/3.13/lib/python3.13/argparse.py:2658: in error
+    self.exit(2, _('%(prog)s: error: %(message)s\n') % args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ArgumentParser(prog='__main__.py', usage=None, description='Discover, create, prepare, or verify an agent-docs task run.', formatter_class=<class 'argparse.HelpFormatter'>, conflict_handler='error', add_help=True)
+status = 2
+message = '__main__.py: error: unrecognized arguments: --record-review\n'
+
+    def exit(self, status=0, message=None):
+        if message:
+            self._print_message(message, _sys.stderr)
+>       _sys.exit(status)
+E       SystemExit: 2
+
+/opt/homebrew/Cellar/python@3.13/3.13.5/Frameworks/Python.framework/Versions/3.13/lib/python3.13/argparse.py:2645: SystemExit
+----------------------------- Captured stderr call -----------------------------
+usage: __main__.py [-h] [--repo-root REPO_ROOT] [--new-task NEW_TASK]
+                   [--title TITLE] [--read-first READ_FIRST]
+                   [--allowed-path ALLOWED_PATH] [--test-command TEST_COMMAND]
+                   [--coordination-mode {solo,review,delegated}]
+                   [--maker-characterization MAKER_CHARACTERIZATION]
+                   [--reviewer-characterization REVIEWER_CHARACTERIZATION]
+                   [--smoke-command SMOKE_COMMAND] [--force] [--prepare-run]
+                   [--verify-only] [--resume] [--run-dir RUN_DIR]
+                   [--timeout-seconds TIMEOUT_SECONDS]
+                   [task]
+__main__.py: error: unrecognized arguments: --record-review
+=========================== short test summary info ============================
+FAILED loop/tests/test_reliability.py::test_dirty_file_additional_edit_is_not_exempt
+FAILED loop/tests/test_reliability.py::test_committed_forbidden_edit_is_seen
+FAILED loop/tests/test_reliability.py::test_test_command_mutation_is_checked_after_execution
+FAILED loop/tests/test_reliability.py::test_only_current_run_artifacts_are_exempt
+FAILED loop/tests/test_reliability.py::test_prepare_fails_closed_outside_git
+FAILED loop/tests/test_reliability.py::test_prepare_requires_actual_repository_root
+FAILED loop/tests/test_reliability.py::test_changed_task_contract_cannot_silently_replace_snapshot
+FAILED loop/tests/test_reliability.py::test_prepared_task_snapshot_preserves_exact_bytes
+FAILED loop/tests/test_reliability.py::test_verify_requires_prepared_baseline
+FAILED loop/tests/test_reliability.py::test_review_text_requires_recorded_patch_binding
+FAILED loop/tests/test_reliability.py::test_record_review_is_valid_until_code_changes
+FAILED loop/tests/test_reliability.py::test_reviewer_artifact_change_invalidates_binding
+FAILED loop/tests/test_reliability.py::test_resume_rejects_status_only_verification
+FAILED loop/tests/test_reliability.py::test_resume_rejects_pass_for_changed_code
+FAILED loop/tests/test_reliability.py::test_resume_rejects_pass_for_changed_task_body
+FAILED loop/tests/test_reliability.py::test_acceptance_maps_conditions_to_command_results
+FAILED loop/tests/test_reliability.py::test_missing_acceptance_mapping_fails_prepare
+FAILED loop/tests/test_reliability.py::test_acceptance_cannot_reference_undeclared_command
+FAILED loop/tests/test_reliability.py::test_timeout_kills_descendant_that_would_write_later
+FAILED loop/tests/test_reliability.py::test_output_retention_is_bounded_and_reports_truncation
+FAILED loop/tests/test_reliability.py::test_review_cli_records_binding - Syst...
+21 failed, 1 passed in 2.71s

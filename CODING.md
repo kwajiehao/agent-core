@@ -4,6 +4,12 @@
 
 Start with the smallest change that fixes the observed behavior.
 
+Reproduce and explain the responsible mechanism before fixing a bug. The smallest
+correct change repairs that cause and meets the full requirement; a shorter diff
+that only suppresses the symptom is not a simplification. Name ownership and the
+domain data shape before adding state or branching. Compare alternatives when a
+consequential boundary is uncertain; preserve existing shapes for routine work.
+
 ## Simplicity Criterion
 
 All else being equal, simpler is better. A change that technically satisfies an
@@ -22,9 +28,9 @@ behavioral improvement:
   simplification win.
 - Replacing custom parsing, polling, or retry code with an existing repo helper
   while keeping behavior equivalent is a simplification win.
-- A tiny acceptance improvement that requires fragile branching across several
-  files is usually worse than a slightly narrower fix that keeps the contract
-  obvious.
+- If an acceptance condition appears to require fragile branching across several
+  files, reconsider the model/ownership before patching. Do not silently narrow
+  the user's required behavior to keep the diff short.
 - A behavior-neutral change that deletes code, reduces special cases, or makes
   ownership clearer is worth keeping when tests still pass.
 

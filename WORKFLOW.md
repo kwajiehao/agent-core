@@ -1,112 +1,86 @@
 # Workflow
 
-This is the canonical task execution guide for agents. The runner verifies
-artifacts and commands; the main agent coordinates the work.
+The main agent owns the task; the runner prepares durable context and executes
+deterministic gates. Use [agent-docs-loop](skills/agent-docs-loop/SKILL.md) for
+the canonical agent procedure and
+[task playbooks](skills/agent-docs-loop/references/playbooks.md) for evidence that
+differs between bugs, features, refactors, performance and investigations.
 
-## Repository-Only Entry Point
+## Intake and coordination
 
-When the user provides a target repository directory without a task path, run
-resume discovery before intake:
+A clear authorized implementation request is sufficient to inspect the repository
+and create its task. Infer allowed paths, commands and coordination mode. Ask only
+for unavailable product meaning, consequential scope expansion or new authority.
+Respect read-only requests and explicit new work; repository discovery must not
+redirect them into an old implementation task.
 
-```bash
-uv --project <agent-core> run python <agent-core>/loop/run_task.py \
-  --repo-root <target-repo> --resume
-```
+Use solo for narrow, clear work; review when independent judgment adds useful
+confidence; delegated when a separate maker benefits implementation. The
+coordinator chooses the mode from evidence and explains it. Delegate bounded
+ownership, preserve shared-write ordering and inspect actual outcomes.
 
-Use the returned `action` as follows:
+Each acceptance condition names an observable behavior and maps to a declared
+test/smoke command. When a verifier is missing, create and prove a small
+project-native driver inside authorized paths using
+[verification profiles](skills/agent-docs-loop/references/verification-profiles.md).
 
-- `resume`: read the selected task, `prompt.md`, `handoff.md`, and existing
-  verification artifacts. Continue in the same run directory; do not prepare a
-  replacement run. Re-read every task `read_first` file before editing.
-- `completed_context`: read the selected task, handoff, and passing
-  `verification.json` to recover prior context. If the user also requested a new
-  change, enter task intake for that change. If the repository path was the
-  entire request, summarize the recovered state and ask what to build next.
-- `intake_required`: no valid prior run exists. Enter task intake.
+## Execution and evidence
 
-Surface `warnings` to the user and do not read records that discovery skipped.
-Discovery intentionally prefers the newest non-passing run across tasks. It
-falls back to the newest passing run only when every valid run passed.
+Prepare a run, read its contract/context, then work in verifiable units. Use
+red-green regression testing where practical. Simplify the implementation before
+review: direct coordinator inspection is sufficient, and available simplifier
+tools are optional. There is no required external CLI or pinned model.
 
-The Agent Core checkout is `<agent-core>` and the user-provided directory is
-`<target-repo>`; they do not need to be the same repository or share a parent.
+For review/delegated tasks, obtain an independent reviewer of the current full
+delta and behavior evidence. Record findings and an exact Verdict: approve line
+in subagents/reviewer.md. Use --record-review on that task/run to bind the review
+artifact to the exact task and repository snapshot. This records freshness; the
+coordinator is still responsible for reviewer independence.
 
-When asked to work from an `agent-docs/tasks/<name>.md` file:
+Run --verify-only once for final execution of the declared tests and optional
+smoke command. Earlier focused tests support development; avoid an unconditional
+duplicate final suite. Read all gates and command outcomes. Scope includes task
+commits, changes to initially dirty files, and command-created edits among tracked
+and nonignored untracked files. Ignored untracked outputs are outside this scope
+check. A verification
+command that changes the tested source invalidates the snapshot and requires
+verification of the resulting tree; generated proof artifacts should live under
+the run's own directory or a documented ignored output location.
 
-1. Run `loop/run_task.py <task> --prepare-run`.
-2. Read the generated `prompt.md`, the task doc, and every `read_first` file.
-3. Read `CODING.md` and `TESTING.md` when making implementation or test choices.
-4. Check `coordination.mode` in the generated prompt:
-   - `solo`: the coordinator may make the smallest correct change directly.
-   - `review`: the coordinator may make the change, then must invoke a reviewer.
-   - `delegated`: the coordinator must invoke a maker and then a reviewer.
-5. Run the simplify pass after implementation and before required review:
-   - In Claude Code: `/simplify`
-   - Outside Claude Code:
-     `claude --model opus-4.8 -p "/simplify" --output-format stream-json --include-partial-messages`
-6. Store required briefs and findings in `subagents/`:
-   - `review` requires `subagents/reviewer.md` with `Verdict: approve`.
-   - `delegated` requires `subagents/maker.md` and `subagents/reviewer.md`
-     with `Verdict: approve`.
-7. Run the task's `test_commands`.
-8. Run `smoke_command` if the task defines one.
-9. Run `loop/run_task.py <task> --verify-only --run-dir <run-dir>`.
-10. Update `handoff.md` if stopping before completion.
-11. After a passed run, optionally reflect into repo memory or a repo-local skill
-   only when the lesson is reusable.
+The task, reviewer, acceptance evidence and code must still match their recorded
+identities. A passing gate proves only the checks declared by that contract. The
+coordinator verifies that every requested outcome has meaningful evidence.
 
-The main agent is the coordinator. It may also act as maker for `solo` and
-`review` tasks. The runner is the required verifier; reviewer subagents provide
-independent judgment but are not the acceptance source. Reflection is optional
-after runner verification passes.
+## Resume and autonomous work
 
-If verification fails, use `verification.json`, `coordination.json`,
-`tests.json`, and `smoke.json` as the source of truth. Fix the issue or update
-the task handoff with the commands run, failures seen, and next hypothesis.
+Repository discovery reads durable runs; it does not launch or manage agents.
+Read task, prompt, handoff and verification when present. Preserve the original
+run for resumable v2 work. Legacy run records remain useful historical context,
+but cannot supply an exact v2 baseline; review their task and prepare a fresh v2
+run explicitly. Surface any warnings and skipped records.
 
-## Responsibilities
+Recover the completed/pending boundary without repeating still-valid work. Check
+freshness before trusting old results and inspect actual handles before assuming
+a process or service is alive. Owned scratch resources and preserved evidence
+have separate lifecycles. Timeout/interruption is incomplete execution.
 
-- Coordinator: owns the run, reads the task contract, invokes required
-  subagents, integrates accepted findings, runs the task commands, and runs
-  final verification.
-- Maker: implements a bounded change inside assigned paths. For small `solo` or
-  `review` tasks, the coordinator may act as maker. For `delegated` tasks, use
-  a maker subagent and record its brief/result in `subagents/maker.md`.
-- Reviewer: independently reviews the diff, tests, and artifacts. It does not
-  edit by default and records findings plus `Verdict: approve` or a requested
-  change in `subagents/reviewer.md`.
-- Verifier: the runner's deterministic gates. The runner remains the only
-  acceptance source.
-- Reflector: an optional post-pass check that persists reusable lessons into
-  repo memory or a repo-local skill after runner verification passes.
+For sustained work, name the exit predicate, scope and budget; checkpoint
+meaningful decisions, failed hypotheses, command outcomes and resources in
+handoff.md. Pivot when evidence refutes the premise. Keep the original outcome
+and authorization boundary intact.
 
-## Subagents
+## Learning and handoff
 
-Subagents are invoked by the coordinator, not by the runner. Invoke one when the
-task requires it, asks for review or research, has separable investigation and
-implementation threads, needs a specialized skill, leaves the coordinator
-stuck, or carries enough risk to justify independent review.
+Capture consequential failures and human corrections even when a run fails.
+Route validated reusable lessons to the strongest practical mechanism: domain
+types, lint, regression, canonical helper or runtime check. Repo memory is useful
+for judgment that cannot be enforced structurally. Read relevant memory on
+subsequent tasks rather than treating its existence as retrieval.
 
-When using a subagent, pass it the task doc, `prompt.md`, relevant `read_first`
-files, `allowed_paths`, current run artifacts, and the task-specific role
-characterization from `coordination`. The coordinator remains responsible for
-final edits and runner verification.
+Broad skill changes need realistic isolated behavioral evaluation. Grade artifacts
+and actions, include abstention/uncertainty cases, retain failures and compare
+matched repeated trials before claiming better efficiency. Avoid global skill
+installation or external issue creation unless requested.
 
-Store subagent briefs and findings in:
-
-```text
-agent-docs/runs/<task-id>/<run-id>/subagents/
-```
-
-Summarize accepted findings back into `handoff.md`.
-
-## Memory And Reflection
-
-Use run memory for interrupted work: `handoff.md`, JSON command artifacts, and
-`subagents/*.md`.
-
-Use repo memory for durable lessons: `agent-docs/MEMORY.md` or repo-local
-skills under `agent-docs/skills/<skill-name>/SKILL.md`.
-
-Reflect only after a passed run. Persist a lesson when it is likely to help
-future tasks; otherwise leave it in the run artifacts.
+Final handoff names the observable result, task/run, actual verification scope,
+red-green evidence and remaining limitations. Agent summaries alone are not proof.

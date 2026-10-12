@@ -1,0 +1,25 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______ test_cli_relative_task_and_run_paths_use_explicit_repository_root _______
+
+tmp_path = PosixPath('/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-22/test_cli_relative_task_and_run0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1024ce3f0>
+capsys = <_pytest.capture.CaptureFixture object at 0x102222900>
+
+    def test_cli_relative_task_and_run_paths_use_explicit_repository_root(tmp_path: Path, monkeypatch, capsys) -> None:
+        root = tmp_path / "project"
+        task = make_task(root)
+        monkeypatch.chdir(tmp_path)
+        task_relative = task.path.relative_to(root).as_posix()
+>       assert runner.main([task_relative, "--repo-root", str(root), "--prepare-run"]) == 0
+E       AssertionError: assert 2 == 0
+E        +  where 2 = <function main at 0x10230e480>(['agent-docs/tasks/CHECK-demo.md', '--repo-root', '/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-22/test_cli_relative_task_and_run0/project', '--prepare-run'])
+E        +    where <function main at 0x10230e480> = runner.main
+
+/Users/kwajiehao/Documents/agent-core/loop/tests/test_reliability.py:59: AssertionError
+----------------------------- Captured stderr call -----------------------------
+ERROR: cannot read task frontmatter /private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-22/test_cli_relative_task_and_run0/agent-docs/tasks/CHECK-demo.md: [Errno 2] No such file or directory: '/private/var/folders/d1/9rnz9ptd47ddt41rf6c95kv00000gn/T/pytest-of-kwajiehao/pytest-22/test_cli_relative_task_and_run0/agent-docs/tasks/CHECK-demo.md'
+=========================== short test summary info ============================
+FAILED loop/tests/test_reliability.py::test_cli_relative_task_and_run_paths_use_explicit_repository_root
+1 failed, 36 deselected in 0.30s
+

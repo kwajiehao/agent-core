@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -20,19 +21,26 @@ from loop.runner import (  # noqa: E402
     collect_changed_files,
     create_task,
     discover_resume,
-    filter_baseline_changed_files,
     load_task,
     main,
     prepare_run,
+    record_review,
     run_command,
     verify_task,
 )
+
+
+@pytest.fixture(autouse=True)
+def python_command_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PATH", str(Path(sys.executable).parent) + os.pathsep + os.environ["PATH"])
 
 
 def write_task(repo_root: Path, body: str) -> Path:
     task_path = repo_root / "agent-docs" / "tasks" / "PR-99-demo.md"
     task_path.parent.mkdir(parents=True, exist_ok=True)
     task_path.write_text(body, encoding="utf-8")
+    if not (repo_root / ".git").exists():
+        init_repo(repo_root)
     return task_path
 
 
@@ -47,6 +55,10 @@ def write_demo_task(
     allowed = allowed_paths or ["src/**"]
     commands = test_commands if test_commands is not None else ['python -c "print(\'ok\')"']
     smoke = f"smoke_command: {smoke_command}\n" if smoke_command else ""
+    acceptance = (
+        "acceptance:\n  - condition: The declared regression check succeeds\n"
+        f"    command: {json.dumps(commands[0])}\n" if commands else ""
+    )
     return write_task(
         repo_root,
         f"""---
@@ -58,6 +70,7 @@ allowed_paths:
 {yaml_list(allowed)}
 test_commands:
 {yaml_list(commands)}
+{acceptance}
 {coordination}
 {smoke}---
 
@@ -77,12 +90,17 @@ allowed_paths:
   - src/**
 test_commands:
   - python -c "print('ok')"
+acceptance:
+  - condition: The declared regression check succeeds
+    command: python -c "print('ok')"
 ---
 
 # {task_id}
 """,
         encoding="utf-8",
     )
+    if not (repo_root / ".git").exists():
+        init_repo(repo_root)
     return task_path
 
 
@@ -94,10 +112,12 @@ def set_run_created_at(run_dir: Path, created_at: str) -> None:
 
 
 def write_verification(run_dir: Path, status: str) -> None:
-    (run_dir / "verification.json").write_text(
-        json.dumps({"status": status}),
-        encoding="utf-8",
-    )
+    metadata = json.loads((run_dir / "run.json").read_text())
+    root = Path(metadata["repo_root"])
+    task = load_task(metadata["task_path"], root)
+    if status == "failed":
+        (root / "forbidden.txt").write_text("trigger actual scope failure", encoding="utf-8")
+    assert verify_task(task, root, run_dir).status == status
 
 
 def yaml_list(items: list[str]) -> str:
@@ -110,7 +130,7 @@ def init_repo(repo_root: Path) -> None:
     for command in (
         ["git", "init", "-q"],
         ["git", "add", "-A"],
-        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"],
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-qm", "init"],
     ):
         subprocess.run(command, cwd=repo_root, check=True)
 
@@ -242,13 +262,6 @@ def test_check_allowed_paths_supports_relative_and_absolute_patterns(tmp_path: P
     )
 
     assert violations == ["src/legacy/videos.py"]
-
-
-def test_filter_baseline_changed_files_ignores_preexisting_dirty_files() -> None:
-    assert filter_baseline_changed_files(
-        ["agent-docs/loop/runner.py", "preexisting.txt"],
-        ["preexisting.txt"],
-    ) == ["agent-docs/loop/runner.py"]
 
 
 def test_collect_changed_files_includes_deleted_tracked_files(tmp_path: Path) -> None:
@@ -448,7 +461,7 @@ def test_install_skills_script_installs_claude_skill_and_command(tmp_path: Path)
     command_text = command.read_text(encoding="utf-8")
     assert str(skill) in command_text
     assert "Repository Mode" in command_text
-    assert "Intake Mode" in command_text
+    assert "assessment and explanation requests read-only" in command_text
 
 
 def test_install_skills_script_defaults_to_all_agents_with_temp_dirs(tmp_path: Path) -> None:
@@ -493,7 +506,8 @@ def test_prepare_run_writes_single_prompt_and_run_json(tmp_path: Path) -> None:
     assert "handoff.md" in prompt
     assert "subagents" in prompt
     assert "Mode: `solo`" in prompt
-    assert "claude --model opus-4.8 -p \"/simplify\"" in prompt
+    assert "no external CLI or model" in prompt
+    assert "--record-review" in prompt
 
 
 def test_prepare_run_writes_delegated_role_characterizations(tmp_path: Path) -> None:
@@ -668,7 +682,8 @@ def test_verify_task_passes_tests_and_skips_missing_smoke(tmp_path: Path) -> Non
     task_path = write_demo_task(tmp_path)
     task = load_task(task_path, tmp_path)
 
-    result = verify_task(task, tmp_path, tmp_path / "run")
+    run = prepare_run(task, tmp_path)
+    result = verify_task(task, tmp_path, run.run_dir)
 
     assert result.status == "passed"
     assert [gate.name for gate in result.gates] == [
@@ -676,12 +691,14 @@ def test_verify_task_passes_tests_and_skips_missing_smoke(tmp_path: Path) -> Non
         "coordination",
         "tests",
         "smoke",
+        "snapshot_stability",
+        "acceptance",
     ]
     assert next(gate for gate in result.gates if gate.name == "coordination").passed
     assert next(gate for gate in result.gates if gate.name == "smoke").details["skipped"] is True
-    assert (tmp_path / "run" / "tests.json").exists()
-    assert (tmp_path / "run" / "coordination.json").exists()
-    assert (tmp_path / "run" / "verification.json").exists()
+    assert (run.run_dir / "tests.json").exists()
+    assert (run.run_dir / "coordination.json").exists()
+    assert (run.run_dir / "verification.json").exists()
 
 
 def test_verify_task_fails_review_coordination_without_reviewer_artifact(
@@ -697,7 +714,7 @@ def test_verify_task_fails_review_coordination_without_reviewer_artifact(
     )
     task = load_task(task_path, tmp_path)
 
-    result = verify_task(task, tmp_path, tmp_path / "run")
+    result = verify_task(task, tmp_path, prepare_run(task, tmp_path).run_dir)
 
     coordination_gate = next(gate for gate in result.gates if gate.name == "coordination")
     assert result.status == "failed"
@@ -714,9 +731,10 @@ def test_verify_task_fails_review_coordination_without_approval(tmp_path: Path) 
     characterization: Principal Python reviewer focused on runner gates.
 """,
     )
-    run_dir = tmp_path / "run"
+    task = load_task(task_path, tmp_path)
+    run_dir = prepare_run(task, tmp_path).run_dir
     subagents = run_dir / "subagents"
-    subagents.mkdir(parents=True)
+    subagents.mkdir(parents=True, exist_ok=True)
     (subagents / "reviewer.md").write_text("Verdict: changes_requested\n", encoding="utf-8")
     task = load_task(task_path, tmp_path)
 
@@ -738,9 +756,10 @@ def test_verify_task_uses_last_reviewer_verdict(tmp_path: Path) -> None:
     characterization: Principal Python reviewer focused on runner gates.
 """,
     )
-    run_dir = tmp_path / "run"
+    task = load_task(task_path, tmp_path)
+    run_dir = prepare_run(task, tmp_path).run_dir
     subagents = run_dir / "subagents"
-    subagents.mkdir(parents=True)
+    subagents.mkdir(parents=True, exist_ok=True)
     (subagents / "reviewer.md").write_text(
         "Verdict: approve\nVerdict: changes_requested\n",
         encoding="utf-8",
@@ -764,7 +783,8 @@ def test_verify_task_fails_when_required_artifact_is_directory(tmp_path: Path) -
     characterization: Principal Python reviewer focused on runner gates.
 """,
     )
-    run_dir = tmp_path / "run"
+    task = load_task(task_path, tmp_path)
+    run_dir = prepare_run(task, tmp_path).run_dir
     (run_dir / "subagents" / "reviewer.md").mkdir(parents=True)
     task = load_task(task_path, tmp_path)
 
@@ -788,12 +808,14 @@ def test_verify_task_passes_review_coordination_with_approval(tmp_path: Path) ->
     characterization: Principal Python reviewer focused on runner gates.
 """,
     )
-    run_dir = tmp_path / "run"
+    task = load_task(task_path, tmp_path)
+    run_dir = prepare_run(task, tmp_path).run_dir
     subagents = run_dir / "subagents"
-    subagents.mkdir(parents=True)
+    subagents.mkdir(parents=True, exist_ok=True)
     (subagents / "reviewer.md").write_text("Verdict: approve\n", encoding="utf-8")
     task = load_task(task_path, tmp_path)
 
+    record_review(task, tmp_path, run_dir)
     result = verify_task(task, tmp_path, run_dir)
 
     coordination_gate = next(gate for gate in result.gates if gate.name == "coordination")
@@ -815,9 +837,10 @@ def test_verify_task_fails_delegated_coordination_without_maker_artifact(
     characterization: Principal Python reviewer focused on runner gates.
 """,
     )
-    run_dir = tmp_path / "run"
+    task = load_task(task_path, tmp_path)
+    run_dir = prepare_run(task, tmp_path).run_dir
     subagents = run_dir / "subagents"
-    subagents.mkdir(parents=True)
+    subagents.mkdir(parents=True, exist_ok=True)
     (subagents / "reviewer.md").write_text("Verdict: approve\n", encoding="utf-8")
     task = load_task(task_path, tmp_path)
 
@@ -833,25 +856,22 @@ def test_verify_task_fails_when_test_commands_are_empty(tmp_path: Path) -> None:
     task_path = write_demo_task(tmp_path, test_commands=[])
     task = load_task(task_path, tmp_path)
 
-    result = verify_task(task, tmp_path, tmp_path / "run")
-
-    tests_gate = next(gate for gate in result.gates if gate.name == "tests")
-    assert result.status == "failed"
-    assert not tests_gate.passed
-    assert tests_gate.details["error"] == "test_commands must contain at least one command"
+    with pytest.raises(FrontmatterError, match="test_commands"):
+        prepare_run(task, tmp_path)
 
 
 def test_verify_task_runs_optional_smoke_command(tmp_path: Path) -> None:
     task_path = write_demo_task(tmp_path, smoke_command='python -c "print(\'smoke\')"')
     task = load_task(task_path, tmp_path)
 
-    result = verify_task(task, tmp_path, tmp_path / "run")
+    run = prepare_run(task, tmp_path)
+    result = verify_task(task, tmp_path, run.run_dir)
 
     smoke_gate = next(gate for gate in result.gates if gate.name == "smoke")
     assert result.status == "passed"
     assert smoke_gate.passed
     assert smoke_gate.details["exit_code"] == 0
-    smoke_json = json.loads((tmp_path / "run" / "smoke.json").read_text(encoding="utf-8"))
+    smoke_json = json.loads((run.run_dir / "smoke.json").read_text(encoding="utf-8"))
     assert smoke_json["stdout"].strip() == "smoke"
 
 
@@ -859,7 +879,7 @@ def test_verify_task_fails_when_optional_smoke_command_fails(tmp_path: Path) -> 
     task_path = write_demo_task(tmp_path, smoke_command='python -c "raise SystemExit(7)"')
     task = load_task(task_path, tmp_path)
 
-    result = verify_task(task, tmp_path, tmp_path / "run")
+    result = verify_task(task, tmp_path, prepare_run(task, tmp_path).run_dir)
 
     smoke_gate = next(gate for gate in result.gates if gate.name == "smoke")
     assert result.status == "failed"
@@ -874,10 +894,11 @@ def test_verify_task_flags_changed_file_outside_allowed_paths(tmp_path: Path) ->
     outside_allowed.write_text("old\n", encoding="utf-8")
     init_repo(tmp_path)
 
+    task = load_task(task_path, tmp_path)
+    run = prepare_run(task, tmp_path)
     outside_allowed.write_text("new\n", encoding="utf-8")
 
-    task = load_task(task_path, tmp_path)
-    result = verify_task(task, tmp_path, tmp_path / "run")
+    result = verify_task(task, tmp_path, run.run_dir)
 
     diff_gate = next(gate for gate in result.gates if gate.name == "diff_scope")
     assert result.status == "failed"

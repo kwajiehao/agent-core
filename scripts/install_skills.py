@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 from dataclasses import dataclass
@@ -40,7 +41,7 @@ def main() -> int:
         "--codex-dest",
         type=Path,
         default=_default_codex_skills_dir(),
-        help="Codex skills destination; defaults to ${CODEX_HOME:-~/.codex}/skills",
+        help="Codex skills destination; defaults to ~/.agents/skills (CODEX_HOME overrides)",
     )
     parser.add_argument(
         "--claude-dir",
@@ -115,7 +116,7 @@ def install_codex_skills(
     for name, skill_source in skills.items():
         skill_dest = destination / name
         status = "installed"
-        if skill_dest.exists():
+        if skill_dest.exists() or skill_dest.is_symlink():
             if not force:
                 installs.append(
                     SkillInstall(
@@ -129,12 +130,13 @@ def install_codex_skills(
                 continue
             status = "replaced"
             if not dry_run:
-                shutil.rmtree(skill_dest)
+                _remove_destination(skill_dest)
 
         if dry_run:
-            status = "would-replace" if skill_dest.exists() and force else "would-install"
+            status = "would-replace" if (skill_dest.exists() or skill_dest.is_symlink()) and force else "would-install"
         else:
             shutil.copytree(skill_source, skill_dest)
+            _write_installation_metadata(skill_dest, name)
 
         installs.append(
             SkillInstall(
@@ -208,7 +210,7 @@ def _copy_skill(
     dry_run: bool,
 ) -> SkillInstall:
     status = "installed"
-    if destination.exists():
+    if destination.exists() or destination.is_symlink():
         if not force:
             return SkillInstall(
                 agent=agent,
@@ -219,12 +221,13 @@ def _copy_skill(
             )
         status = "replaced"
         if not dry_run:
-            shutil.rmtree(destination)
+            _remove_destination(destination)
 
     if dry_run:
-        status = "would-replace" if destination.exists() and force else "would-install"
+        status = "would-replace" if (destination.exists() or destination.is_symlink()) and force else "would-install"
     else:
         shutil.copytree(source, destination)
+        _write_installation_metadata(destination, name)
 
     return SkillInstall(
         agent=agent,
@@ -245,7 +248,7 @@ def _write_claude_command(
     dry_run: bool,
 ) -> SkillInstall:
     status = "installed"
-    if destination.exists():
+    if destination.exists() or destination.is_symlink():
         if not force:
             return SkillInstall(
                 agent="claude",
@@ -258,8 +261,10 @@ def _write_claude_command(
         status = "replaced"
 
     if dry_run:
-        status = "would-replace" if destination.exists() and force else "would-install"
+        status = "would-replace" if (destination.exists() or destination.is_symlink()) and force else "would-install"
     else:
+        if destination.is_symlink():
+            destination.unlink()
         destination.write_text(
             _claude_command(name, skill_path, agent_core_root),
             encoding="utf-8",
@@ -292,10 +297,9 @@ Use this agent-core checkout for `<agent-core>` command placeholders:
 {agent_core_root}
 ```
 
-If the user provides a repository directory without an
-`agent-docs/tasks/*.md` file, run the skill's Repository Mode first. Run
-Intake Mode only when discovery requires it. If the user provides a task file,
-run Execution Mode.
+For an explicit repository-only loop request, run Repository Mode first.
+Explicit new work takes precedence over unrelated unfinished tasks. A task file
+selects Execution Mode. Keep assessment and explanation requests read-only.
 
 Treat the current working directory as `<target-repo>` unless the user gives a
 different repo path.
@@ -328,7 +332,22 @@ def _default_codex_skills_dir() -> Path:
     codex_home = os.environ.get("CODEX_HOME")
     if codex_home:
         return Path(codex_home) / "skills"
-    return Path.home() / ".codex" / "skills"
+    return Path.home() / ".agents" / "skills"
+
+
+def _remove_destination(path: Path) -> None:
+    """Replace the requested entry while preserving a symlink's foreign target."""
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    else:
+        shutil.rmtree(path)
+
+
+def _write_installation_metadata(destination: Path, name: str) -> None:
+    if name == "agent-docs-loop":
+        reference = destination / "references" / "installation.json"
+        reference.parent.mkdir(parents=True, exist_ok=True)
+        reference.write_text(json.dumps({"agent_core_root": str(_repo_root())}) + "\n", encoding="utf-8")
 
 
 def _default_claude_dir() -> Path:
